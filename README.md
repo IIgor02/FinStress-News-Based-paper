@@ -29,23 +29,6 @@ Daily FSI = (weighted_stress_posts / weighted_financial_posts) × 100
 - Mean = 100
 - Standard deviation preserved from raw data
 
-## Installation
-
-```bash
-pip install -r requirements.txt
-```
-
-### Dependencies
-- pandas >= 1.5.0
-- numpy >= 1.21.0
-- nltk >= 3.8.0
-- scikit-learn >= 1.0.0
-- matplotlib >= 3.5.0
-- seaborn >= 0.12.0
-- unidecode >= 1.3.0
-- yfinance >= 0.2.0
-- scipy >= 1.9.0
-
 ## Usage
 
 ### Quick Start (Synthetic Data)
@@ -125,12 +108,7 @@ FinStress-News-Based-paper/
 
 ## Validation
 
-Target correlation with IBOVESPA realized volatility: **0.70 - 0.85**
-(Based on Baker et al. 2019 correlation with VIX)
-
-Typical results with synthetic data:
-- Daily Pearson correlation: r ≈ 0.72
-- Monthly Pearson correlation: r ≈ 0.79
+Target correlation with IBOVESPA realized volatility
 
 ## Programmatic Usage
 
@@ -185,4 +163,5 @@ Baker, S. R., Bloom, N., Davis, S. J., & Kost, K. J. (2019). Policy News and Sto
 
 ## Author
 
-CAEN/UFC Master's Research
+Pedro Igor
+CAEN/UFC
