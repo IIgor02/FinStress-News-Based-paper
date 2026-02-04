@@ -35,7 +35,7 @@ env/
 # Jupyter
 .ipynb_checkpoints/
 
-# Data files (keep structure, ignore large files)
+# Data files (keep structure, ignore large generated files)
 data/raw/*.csv
 data/raw/*.json
 data/processed/*.csv
@@ -45,7 +45,10 @@ data/processed/*.json
 
 # Output files (regenerated on run)
 output/results/*.csv
+output/results/*.json
 output/plots/*.png
+output/plots/*.jpg
+output/plots/*.pdf
 !output/results/.gitkeep
 !output/plots/.gitkeep
 
@@ -59,3 +62,7 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# Temporary files
+*.tmp
+*.temp

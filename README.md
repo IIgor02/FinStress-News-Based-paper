@@ -11,6 +11,112 @@ This project calculates a **Financial Stress Index (FSI)** by analyzing social m
 
 A post is classified as indicating "financial stress" only if it contains at least one term from **each** category.
 
+## Project Structure (3 Main Scripts)
+
+```
+FinStress-News-Based-paper/
+├── scripts/
+│   ├── dictionaries.py    # Script 1: Portuguese term dictionaries
+│   ├── collect_data.py    # Script 2: Data collection (Twitter/Reddit/IBOVESPA)
+│   └── run_fsi.py         # Script 3: FSI calculation, validation, plots
+├── src/                   # Legacy modules (kept for reference)
+├── data/
+│   └── raw/               # Input data (generated/collected)
+├── output/
+│   ├── results/           # CSV outputs
+│   └── plots/             # Visualizations
+├── requirements.txt
+└── README.md
+```
+
+## Quick Start
+
+### 1. Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 2. Collect Data
+
+```bash
+# Generate synthetic data for testing
+python scripts/collect_data.py --synthetic --start-date 2020-01-01 --end-date 2024-12-31
+
+# Or collect real data (requires API credentials)
+python scripts/collect_data.py --all --start-date 2020-01-01 --end-date 2024-12-31
+```
+
+### 3. Calculate FSI
+
+```bash
+python scripts/run_fsi.py
+```
+
+### 4. View Results
+
+- **CSV files**: `output/results/`
+- **Plots**: `output/plots/`
+
+## Detailed Usage
+
+### Script 1: Dictionaries (`scripts/dictionaries.py`)
+
+View dictionary statistics:
+```bash
+python scripts/dictionaries.py
+```
+
+Output:
+```
+📚 Term Counts:
+   Financial terms: 270
+   Stress terms:    163
+   Negative terms:  441
+   Total unique:    849
+```
+
+### Script 2: Data Collection (`scripts/collect_data.py`)
+
+```bash
+# Synthetic data (for testing)
+python scripts/collect_data.py --synthetic
+
+# Real IBOVESPA data only
+python scripts/collect_data.py --ibovespa
+
+# All data with custom date range
+python scripts/collect_data.py --all --start-date 2020-01-01 --end-date 2024-12-31
+```
+
+**Environment Variables (for real data):**
+```bash
+export TWITTER_BEARER_TOKEN="your_token"    # Twitter API v2
+export REDDIT_CLIENT_ID="your_client_id"    # Reddit API
+export REDDIT_CLIENT_SECRET="your_secret"   # Reddit API
+```
+
+### Script 3: FSI Calculation (`scripts/run_fsi.py`)
+
+```bash
+# Default settings
+python scripts/run_fsi.py
+
+# Custom parameters
+python scripts/run_fsi.py --min-posts 10 --twitter-weight 0.7 --reddit-weight 0.3 --smoothing 14
+
+# Skip plots (faster)
+python scripts/run_fsi.py --no-plots
+```
+
+**Tunable Parameters:**
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--min-posts` | 5 | Minimum posts/day for valid FSI |
+| `--twitter-weight` | 0.6 | Twitter weight in combined FSI |
+| `--reddit-weight` | 0.4 | Reddit weight in combined FSI |
+| `--smoothing` | 7 | Rolling average window (0=none) |
+
 ## Methodology
 
 Based on Baker, Bloom, Davis, and Kost (2019): "Policy News and Stock Market Volatility", adapted for Brazilian Portuguese.
@@ -27,157 +133,90 @@ Daily FSI = (weighted_stress_posts / weighted_financial_posts) × 100
 
 **Standardization:**
 - Mean = 100
-- Standard deviation preserved from raw data
+- Standard deviation preserved
 
-## Installation
+### Three-Way Co-occurrence
 
-```bash
-pip install -r requirements.txt
+A post is classified as "stress" if it contains at least one term from:
+1. **Financial** (270 terms): mercado, bolsa, Ibovespa, ações, banco, crédito...
+2. **Stress** (163 terms): crise, risco, volatilidade, pânico, incerteza, colapso...
+3. **Negative** (441 terms): queda, perda, prejuízo, despencar, falência, problema...
+
+## Validation Results
+
+Target correlation with market volatility: **0.60 - 0.90** (from Baker et al. 2019)
+
+**Achieved with synthetic data:**
+```
+Daily:   Pearson r = 0.754 ✓
+Monthly: Pearson r = 0.824 ✓
 ```
 
-### Dependencies
-- pandas >= 1.5.0
-- numpy >= 1.21.0
-- nltk >= 3.8.0
-- scikit-learn >= 1.0.0
-- matplotlib >= 3.5.0
-- seaborn >= 0.12.0
-- unidecode >= 1.3.0
-- yfinance >= 0.2.0
-- scipy >= 1.9.0
+## Output Files
 
-## Usage
+### CSV Results (`output/results/`)
+| File | Description |
+|------|-------------|
+| `fsi_twitter_daily.csv` | Daily FSI from Twitter |
+| `fsi_reddit_daily.csv` | Daily FSI from Reddit |
+| `fsi_combined_daily.csv` | Combined daily FSI |
+| `fsi_monthly.csv` | Monthly FSI (all platforms) |
 
-### Quick Start (Synthetic Data)
+### Plots (`output/plots/`)
+| File | Description |
+|------|-------------|
+| `fsi_timeseries.png` | FSI over time with crisis markers |
+| `fsi_vs_volatility.png` | FSI vs IBOVESPA volatility |
+| `fsi_scatter.png` | Correlation scatter plot |
+| `fsi_monthly_comparison.png` | Platform comparison |
 
-Test the methodology with synthetic data:
+## Crisis Episodes Tracked
 
-```bash
-python fsi_dictionary.py --synthetic --start-date 2020-01-01 --end-date 2024-12-31
+The index marks these Brazilian crisis periods:
+- **2008-2009**: Global Financial Crisis
+- **2014**: Petrobras Scandal
+- **2015-2016**: Brazilian Recession / Dilma Impeachment
+- **2017**: JBS Scandal (Joesley Day)
+- **2018**: Truckers Strike
+- **2020**: COVID-19 Crash
+- **2021**: Fiscal Concerns (PEC dos Precatórios)
+- **2022**: Election Uncertainty
+- **2023**: January 8 Events
+
+## Programmatic Usage
+
+```python
+from scripts.dictionaries import DICTIONARIES, get_dictionary_stats
+from scripts.run_fsi import classify_post, preprocess_text
+
+# Check dictionary stats
+stats = get_dictionary_stats()
+print(f"Total terms: {stats['total_unique']}")
+
+# Classify a single post
+result = classify_post("A crise no mercado financeiro gera pânico com queda das ações")
+print(f"Is stress: {result['is_stress']}")  # True
 ```
 
-### With Real Data
+## Data Format
 
-```bash
-python fsi_dictionary.py \
-    --twitter-data data/raw/twitter_data.csv \
-    --reddit-data data/raw/reddit_data.csv \
-    --start-date 2020-01-01 \
-    --end-date 2024-12-31
-```
-
-### Expected Data Format
-
-**Twitter CSV:**
+### Input: Twitter CSV
 ```csv
 date,text,followers,user_id
 2024-01-01 10:30:00,A crise no mercado financeiro...,15000,user_123
 ```
 
-**Reddit CSV:**
+### Input: Reddit CSV
 ```csv
 date,text,upvotes,subreddit
 2024-01-01 14:00:00,Ibovespa despenca com volatilidade...,234,investimentos
 ```
 
-## Output
-
-### CSV Files (`output/results/`)
-- `fsi_twitter_daily.csv` - Daily FSI from Twitter
-- `fsi_reddit_daily.csv` - Daily FSI from Reddit
-- `fsi_combined_daily.csv` - Combined daily FSI
-- `fsi_monthly.csv` - Monthly FSI (all platforms)
-
-### Plots (`output/plots/`)
-- `fsi_timeseries.png` - FSI over time with crisis markers
-- `fsi_vs_volatility.png` - FSI overlaid with market volatility
-- `fsi_scatter.png` - Correlation scatter plot
-
-## Project Structure
-
+### Input: IBOVESPA CSV
+```csv
+date,close,return,realized_vol_30d
+2024-01-02,130000,0.012,18.5
 ```
-FinStress-News-Based-paper/
-├── fsi_dictionary.py      # Main script
-├── requirements.txt
-├── README.md
-├── src/
-│   ├── __init__.py
-│   ├── dictionaries.py    # Portuguese term dictionaries
-│   ├── preprocessing.py   # Text preprocessing
-│   ├── classifier.py      # Three-way co-occurrence classifier
-│   ├── fsi_calculator.py  # FSI calculation with weighting
-│   ├── data_generator.py  # Synthetic data generation
-│   └── validation.py      # Validation and visualization
-├── data/
-│   ├── raw/               # Input data
-│   └── processed/         # Processed data
-└── output/
-    ├── results/           # CSV outputs
-    └── plots/             # Visualizations
-```
-
-## Dictionary Statistics
-
-- **Financial terms:** 105 terms
-- **Stress terms:** 67 terms
-- **Negative terms:** 172 terms
-- **Total unique terms:** 341
-
-## Validation
-
-Target correlation with IBOVESPA realized volatility: **0.70 - 0.85**
-(Based on Baker et al. 2019 correlation with VIX)
-
-Typical results with synthetic data:
-- Daily Pearson correlation: r ≈ 0.72
-- Monthly Pearson correlation: r ≈ 0.79
-
-## Programmatic Usage
-
-```python
-from src import (
-    StressClassifier,
-    FSICalculator,
-    validate_fsi,
-    generate_synthetic_twitter_data,
-)
-
-# Generate test data
-twitter_df = generate_synthetic_twitter_data(
-    start_date='2020-01-01',
-    end_date='2024-12-31',
-)
-
-# Initialize components
-classifier = StressClassifier()
-calculator = FSICalculator()
-
-# Classify posts
-classified = calculator.classify_dataframe(twitter_df, text_column='text')
-
-# Calculate FSI
-daily_fsi = calculator.calculate_daily_fsi(
-    classified,
-    date_column='date',
-    weight_column='followers',
-    platform='twitter',
-)
-
-# Standardize
-daily_fsi['fsi'] = calculator.standardize_fsi(daily_fsi['fsi_raw'])
-```
-
-## Crisis Episodes
-
-The index automatically marks these Brazilian crisis periods:
-- Petrobras Scandal (2014)
-- Brazilian Recession / Dilma Impeachment (2015-2016)
-- JBS Scandal - Joesley Day (2017)
-- Truckers Strike (2018)
-- COVID-19 Crash (2020)
-- Fiscal Concerns - PEC (2021)
-- Election Uncertainty (2022)
-- January 8 Events (2023)
 
 ## References
 
