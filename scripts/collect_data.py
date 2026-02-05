@@ -10,17 +10,20 @@ Collects data from three sources:
 3. IBOVESPA - Market data (yfinance)
 
 Usage:
-    # Collect all data
-    python scripts/collect_data.py --all --start-date 2015-01-01 --end-date 2024-12-31
+    # Collect all data (real data from APIs)
+    python scripts/collect_data.py --all
 
-    # Collect only Google Trends data
-    python scripts/collect_data.py --google-trends --start-date 2015-01-01 --end-date 2024-12-31
+    # Collect only Google Trends data (free, no API key)
+    python scripts/collect_data.py --google-trends
 
     # Collect only Twitter data
-    python scripts/collect_data.py --twitter --start-date 2020-01-01 --end-date 2024-12-31
+    python scripts/collect_data.py --twitter
 
     # Generate synthetic data for testing
-    python scripts/collect_data.py --synthetic --start-date 2015-01-01 --end-date 2024-12-31
+    python scripts/collect_data.py --synthetic
+
+    # Custom date range
+    python scripts/collect_data.py --all --start-date 2015-01-01 --end-date 2025-12-31
 
 Output:
     data/raw/twitter_data.csv
@@ -79,7 +82,7 @@ TWITTER_DELAY = 2
 def collect_google_trends(
     queries: List[str],
     start_date: str = '2015-01-01',
-    end_date: str = '2024-12-31',
+    end_date: str = '2025-12-31',
     geo: str = 'BR',
     output_path: Optional[str] = None,
 ) -> pd.DataFrame:
@@ -175,7 +178,7 @@ def collect_google_trends(
 def generate_synthetic_google_trends(
     queries: List[str],
     start_date: str = '2015-01-01',
-    end_date: str = '2024-12-31',
+    end_date: str = '2025-12-31',
     output_path: Optional[str] = None,
     seed: int = 45,
 ) -> pd.DataFrame:
@@ -610,7 +613,7 @@ Environment Variables (optional):
     parser.add_argument('--ibovespa', action='store_true', help='Collect IBOVESPA market data')
     parser.add_argument('--synthetic', action='store_true', help='Generate synthetic data')
     parser.add_argument('--start-date', type=str, default='2015-01-01', help='Start date')
-    parser.add_argument('--end-date', type=str, default='2024-12-31', help='End date')
+    parser.add_argument('--end-date', type=str, default='2025-12-31', help='End date')
     parser.add_argument('--max-tweets', type=int, default=10000, help='Max tweets per query')
 
     args = parser.parse_args()
