@@ -277,4 +277,5 @@ date,close,return,realized_vol_30d
 
 ## Author
 
-CAEN/UFC Master's Research
+Pedro Igor
+CAEN/UFC
