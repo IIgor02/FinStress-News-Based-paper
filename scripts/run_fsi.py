@@ -4,32 +4,30 @@ Financial Stress Index Calculator
 =================================
 Script 3 of 3: FSI Calculation, Validation, and Visualization
 
-This script:
-1. Loads collected data (Twitter, Reddit, IBOVESPA)
-2. Classifies posts using three-way co-occurrence
-3. Calculates daily and monthly FSI with weighting
-4. Validates against IBOVESPA volatility
-5. Generates visualizations
+Calculates FSI from two sources:
+1. Twitter - Daily FSI using three-way co-occurrence (Baker et al. 2019)
+2. Google Trends - Weekly FSSVI using search volume (Da et al. 2011)
+
+Combined Index = weighted average of Twitter + Google Trends FSI
 
 Usage:
     # Run with default settings
     python scripts/run_fsi.py
 
-    # Run with custom parameters
-    python scripts/run_fsi.py --min-posts 10 --twitter-weight 0.7 --reddit-weight 0.3
+    # Custom parameters
+    python scripts/run_fsi.py --twitter-weight 0.5 --gt-weight 0.5 --aggregation average
 
-    # Run without generating plots (faster)
+    # Skip plots (faster)
     python scripts/run_fsi.py --no-plots
 
 Output:
     output/results/fsi_twitter_daily.csv
-    output/results/fsi_reddit_daily.csv
-    output/results/fsi_combined_daily.csv
+    output/results/fsi_google_trends_weekly.csv
+    output/results/fsi_combined_weekly.csv
     output/results/fsi_monthly.csv
     output/plots/fsi_timeseries.png
     output/plots/fsi_vs_volatility.png
-    output/plots/fsi_scatter.png
-    output/plots/fsi_monthly_comparison.png
+    output/plots/fsi_components.png
 """
 
 import argparse
@@ -41,7 +39,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
 import matplotlib
-matplotlib.use('Agg')  # Non-interactive backend
+matplotlib.use('Agg')
 
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -51,7 +49,6 @@ from scipy import stats
 import seaborn as sns
 from unidecode import unidecode
 
-# Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scripts.dictionaries import (
@@ -59,45 +56,48 @@ from scripts.dictionaries import (
     FINANCIAL_TERMS,
     STRESS_TERMS,
     NEGATIVE_TERMS,
+    STRESS_QUERIES_GT,
+    QUERY_WEIGHTS,
     CRISIS_EPISODES,
     get_dictionary_stats,
+    get_query_weight,
 )
 
-# Suppress warnings
 warnings.filterwarnings('ignore')
-
-# Set plot style
 plt.style.use('seaborn-v0_8-whitegrid')
 sns.set_palette("husl")
 
 
 # =============================================================================
-# CONFIGURATION / TUNABLE PARAMETERS
+# CONFIGURATION
 # =============================================================================
 
 class FSIConfig:
-    """Configuration parameters for FSI calculation."""
+    """Configuration for FSI calculation."""
 
-    # Minimum posts per day to calculate valid FSI
+    # Minimum data requirements
     MIN_POSTS_PER_DAY: int = 5
+    MIN_QUERIES_FOR_GT: int = 3  # Minimum queries with data
 
-    # Platform weighting for combined FSI
-    TWITTER_WEIGHT: float = 0.6
-    REDDIT_WEIGHT: float = 0.4
+    # Platform weights for combined FSI
+    TWITTER_WEIGHT: float = 0.5
+    GT_WEIGHT: float = 0.5
 
     # Standardization
     TARGET_MEAN: float = 100.0
-    TARGET_STD: Optional[float] = None  # None = preserve original std
 
-    # Volatility column to use for validation
+    # Volatility column for validation
     VOLATILITY_COLUMN: str = 'realized_vol_30d'
 
-    # Target correlation range (from Baker et al. 2019)
+    # Target correlation range
     TARGET_CORRELATION_MIN: float = 0.60
     TARGET_CORRELATION_MAX: float = 0.90
 
-    # Rolling window for smoothing (0 = no smoothing)
-    SMOOTHING_WINDOW: int = 7
+    # Smoothing window
+    SMOOTHING_WINDOW: int = 4  # weeks for GT
+
+    # Google Trends aggregation method
+    GT_AGGREGATION: str = 'weighted_average'  # 'average', 'weighted_average', 'pca'
 
     # File paths
     DATA_DIR: Path = Path(__file__).parent.parent / 'data' / 'raw'
@@ -105,98 +105,58 @@ class FSIConfig:
     PLOTS_DIR: Path = Path(__file__).parent.parent / 'output' / 'plots'
 
 
-# Global config instance
 CONFIG = FSIConfig()
 
 
 # =============================================================================
-# TEXT PREPROCESSING
+# TEXT PREPROCESSING (Twitter)
 # =============================================================================
-
-# Portuguese stopwords
-STOPWORDS = {
-    'a', 'ao', 'aos', 'as', 'da', 'das', 'de', 'do', 'dos', 'e', 'em',
-    'na', 'nas', 'no', 'nos', 'o', 'os', 'para', 'por', 'que', 'um', 'uma',
-}
-
 
 def preprocess_text(text: str) -> str:
     """Preprocess text for dictionary matching."""
     if not isinstance(text, str):
         return ''
-
-    # Lowercase
     text = text.lower()
-
-    # Remove URLs
     text = re.sub(r'http[s]?://\S+', '', text)
-    text = re.sub(r'www\.\S+', '', text)
-
-    # Remove mentions
     text = re.sub(r'@\w+', '', text)
-
-    # Convert hashtags to words
     text = re.sub(r'#(\w+)', r'\1', text)
-
-    # Remove RT prefix
     text = re.sub(r'^rt\s+', '', text)
-
-    # Normalize whitespace
     text = re.sub(r'\s+', ' ', text).strip()
-
     return text
 
 
 def extract_tokens(text: str) -> Set[str]:
-    """Extract tokens from preprocessed text."""
+    """Extract tokens from text."""
     if not text:
         return set()
-
     words = text.split()
     tokens = set(words)
-
-    # Also add accent-normalized versions
     tokens.update(unidecode(w) for w in words)
-
     return tokens
 
 
 # =============================================================================
-# CLASSIFICATION (Three-Way Co-occurrence)
+# TWITTER FSI CALCULATION (Three-Way Co-occurrence)
 # =============================================================================
 
-def find_matches(
-    tokens: Set[str],
-    text: str,
-    dictionary: Set[str],
-) -> List[str]:
+def find_matches(tokens: Set[str], text: str, dictionary: Set[str]) -> List[str]:
     """Find dictionary terms in tokens/text."""
     matches = []
-
     for term in dictionary:
         if ' ' in term:
-            # Multi-word term: check in original text
             if term in text or unidecode(term) in text:
                 matches.append(term)
         else:
-            # Single word: check in tokens
             if term in tokens or unidecode(term) in tokens:
                 matches.append(term)
-
     return matches
 
 
 def classify_post(text: str) -> Dict:
-    """
-    Classify a single post using three-way co-occurrence.
-
-    Returns:
-        Dictionary with classification results
-    """
+    """Classify a post using three-way co-occurrence."""
     processed = preprocess_text(text)
     tokens = extract_tokens(processed)
 
-    # Find matches in each category
     financial_matches = find_matches(tokens, processed, DICTIONARIES['financial'])
     stress_matches = find_matches(tokens, processed, DICTIONARIES['stress'])
     negative_matches = find_matches(tokens, processed, DICTIONARIES['negative'])
@@ -214,66 +174,39 @@ def classify_post(text: str) -> Dict:
         'n_financial': len(financial_matches),
         'n_stress': len(stress_matches),
         'n_negative': len(negative_matches),
-        'financial_terms': financial_matches[:5],  # Limit for memory
-        'stress_terms': stress_matches[:5],
-        'negative_terms': negative_matches[:5],
     }
 
 
-def classify_dataframe(df: pd.DataFrame, text_column: str = 'text') -> pd.DataFrame:
-    """Classify all posts in a DataFrame."""
-    print(f"    Classifying {len(df):,} posts...")
-
+def classify_twitter_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Classify all Twitter posts."""
+    print(f"    Classifying {len(df):,} tweets...")
     df = df.copy()
-    results = df[text_column].apply(classify_post)
-
+    results = df['text'].apply(classify_post)
     df['is_financial'] = results.apply(lambda x: x['is_financial'])
     df['is_stress'] = results.apply(lambda x: x['is_stress'])
-    df['n_financial'] = results.apply(lambda x: x['n_financial'])
-    df['n_stress'] = results.apply(lambda x: x['n_stress'])
-    df['n_negative'] = results.apply(lambda x: x['n_negative'])
-
     return df
 
 
-# =============================================================================
-# FSI CALCULATION
-# =============================================================================
-
-def calculate_weight(value: float, platform: str = 'twitter') -> float:
-    """Calculate log-based weight for engagement metric."""
-    return np.log1p(max(0, value))
-
-
-def calculate_daily_fsi(
-    df: pd.DataFrame,
-    date_column: str = 'date',
-    weight_column: Optional[str] = None,
-    platform: str = 'twitter',
-) -> pd.DataFrame:
-    """Calculate daily FSI from classified data."""
-
+def calculate_twitter_daily_fsi(df: pd.DataFrame) -> pd.DataFrame:
+    """Calculate daily Twitter FSI."""
     df = df.copy()
-    df['date_only'] = pd.to_datetime(df[date_column]).dt.date
+    df['date_only'] = pd.to_datetime(df['date']).dt.date
 
     # Calculate weights
-    if weight_column and weight_column in df.columns:
-        df['weight'] = df[weight_column].apply(lambda x: calculate_weight(x, platform))
+    if 'followers' in df.columns:
+        df['weight'] = np.log1p(df['followers'].clip(lower=0))
     else:
         df['weight'] = 1.0
 
-    # Filter to financial posts
     financial_df = df[df['is_financial']].copy()
 
     if len(financial_df) == 0:
         return pd.DataFrame(columns=['date', 'fsi_raw', 'n_financial', 'n_stress'])
 
-    # Group by date
     daily_stats = []
     for date, group in financial_df.groupby('date_only'):
         total_weight = group['weight'].sum()
         stress_weight = group[group['is_stress']]['weight'].sum()
-
         fsi_raw = (stress_weight / total_weight * 100) if total_weight > 0 else np.nan
 
         daily_stats.append({
@@ -281,8 +214,6 @@ def calculate_daily_fsi(
             'fsi_raw': fsi_raw,
             'n_financial': len(group),
             'n_stress': group['is_stress'].sum(),
-            'total_weight': total_weight,
-            'stress_weight': stress_weight,
         })
 
     daily_df = pd.DataFrame(daily_stats)
@@ -295,10 +226,86 @@ def calculate_daily_fsi(
     return daily_df
 
 
+# =============================================================================
+# GOOGLE TRENDS FSI CALCULATION (Search Volume Index)
+# =============================================================================
+
+def calculate_google_trends_fsi(
+    gt_df: pd.DataFrame,
+    method: str = 'weighted_average',
+) -> pd.DataFrame:
+    """
+    Calculate Financial Stress Search Volume Index (FSSVI) from Google Trends.
+
+    Args:
+        gt_df: DataFrame with Google Trends data (date + query columns)
+        method: 'average', 'weighted_average', or 'pca'
+
+    Returns:
+        DataFrame with weekly FSSVI
+    """
+    df = gt_df.copy()
+
+    # Identify query columns (exclude date and source)
+    query_cols = [c for c in df.columns if c not in ['date', 'source', 'isPartial']]
+
+    if len(query_cols) < CONFIG.MIN_QUERIES_FOR_GT:
+        print(f"    ⚠ Only {len(query_cols)} queries found (need {CONFIG.MIN_QUERIES_FOR_GT})")
+        return pd.DataFrame(columns=['date', 'fssvi_raw'])
+
+    print(f"    Processing {len(query_cols)} Google Trends queries...")
+
+    if method == 'average':
+        # Simple average of all query SVIs
+        df['fssvi_raw'] = df[query_cols].mean(axis=1)
+
+    elif method == 'weighted_average':
+        # Weighted average using query weights from dictionaries
+        weights = {q: get_query_weight(q) for q in query_cols}
+        total_weight = sum(weights.values())
+
+        weighted_sum = sum(df[q] * weights.get(q, 1.0) for q in query_cols)
+        df['fssvi_raw'] = weighted_sum / total_weight
+
+    elif method == 'pca':
+        # Extract first principal component
+        from sklearn.decomposition import PCA
+
+        query_data = df[query_cols].dropna()
+        if len(query_data) < 10:
+            print("    ⚠ Insufficient data for PCA, using weighted average")
+            return calculate_google_trends_fsi(gt_df, 'weighted_average')
+
+        # Standardize
+        query_std = (query_data - query_data.mean()) / query_data.std()
+
+        pca = PCA(n_components=1)
+        pc1 = pca.fit_transform(query_std).flatten()
+
+        print(f"    PCA variance explained: {pca.explained_variance_ratio_[0]:.1%}")
+
+        # Rescale to 0-100 range
+        pc1_scaled = (pc1 - pc1.min()) / (pc1.max() - pc1.min()) * 100
+        df.loc[query_data.index, 'fssvi_raw'] = pc1_scaled
+
+    else:
+        raise ValueError(f"Unknown method: {method}")
+
+    # Select output columns
+    result = df[['date', 'fssvi_raw']].copy()
+    result['date'] = pd.to_datetime(result['date'])
+    result = result.sort_values('date').reset_index(drop=True)
+
+    return result
+
+
+# =============================================================================
+# STANDARDIZATION
+# =============================================================================
+
 def standardize_fsi(fsi_series: pd.Series) -> pd.Series:
     """Standardize FSI to target mean."""
     valid = fsi_series.dropna()
-
     if len(valid) == 0:
         return fsi_series
 
@@ -308,67 +315,94 @@ def standardize_fsi(fsi_series: pd.Series) -> pd.Series:
     if std == 0:
         return pd.Series(CONFIG.TARGET_MEAN, index=fsi_series.index)
 
-    # Z-score and rescale
     standardized = (fsi_series - mean) / std
     standardized = standardized * std + CONFIG.TARGET_MEAN
 
     return standardized
 
 
-def calculate_monthly_fsi(daily_df: pd.DataFrame, fsi_column: str = 'fsi') -> pd.DataFrame:
-    """Aggregate daily FSI to monthly."""
-    df = daily_df.copy()
-    df['month'] = pd.to_datetime(df['date']).dt.to_period('M')
+# =============================================================================
+# COMBINING TWITTER + GOOGLE TRENDS
+# =============================================================================
 
-    monthly = df.groupby('month').agg({
-        fsi_column: 'mean',
+def combine_twitter_and_google_trends(
+    twitter_daily: pd.DataFrame,
+    gt_weekly: pd.DataFrame,
+    twitter_weight: float = 0.5,
+    gt_weight: float = 0.5,
+) -> pd.DataFrame:
+    """
+    Combine Twitter FSI (daily) with Google Trends FSI (weekly).
+
+    Args:
+        twitter_daily: Daily Twitter FSI with 'date' and 'fsi' columns
+        gt_weekly: Weekly Google Trends FSI with 'date' and 'fssvi' columns
+        twitter_weight: Weight for Twitter (0-1)
+        gt_weight: Weight for Google Trends (0-1)
+
+    Returns:
+        Combined weekly FSI DataFrame
+    """
+    # Aggregate Twitter to weekly
+    twitter_daily = twitter_daily.copy()
+    twitter_daily['week'] = pd.to_datetime(twitter_daily['date']).dt.to_period('W')
+
+    twitter_weekly = twitter_daily.groupby('week').agg({
+        'fsi': 'mean',
         'n_financial': 'sum',
         'n_stress': 'sum',
     }).reset_index()
+    twitter_weekly['date'] = twitter_weekly['week'].dt.to_timestamp()
+    twitter_weekly = twitter_weekly.drop('week', axis=1)
 
-    monthly['month'] = monthly['month'].dt.to_timestamp()
-    monthly = monthly.rename(columns={fsi_column: 'fsi'})
+    # Merge
+    gt_weekly = gt_weekly.copy()
+    gt_weekly['date'] = pd.to_datetime(gt_weekly['date'])
 
-    return monthly
-
-
-def combine_platforms(
-    twitter_daily: pd.DataFrame,
-    reddit_daily: pd.DataFrame,
-) -> pd.DataFrame:
-    """Combine FSI from Twitter and Reddit."""
     combined = pd.merge(
-        twitter_daily[['date', 'fsi_raw', 'n_financial', 'n_stress']],
-        reddit_daily[['date', 'fsi_raw', 'n_financial', 'n_stress']],
+        twitter_weekly[['date', 'fsi']].rename(columns={'fsi': 'fsi_twitter'}),
+        gt_weekly[['date', 'fssvi']].rename(columns={'fssvi': 'fsi_gt'}),
         on='date',
         how='outer',
-        suffixes=('_twitter', '_reddit'),
     )
 
-    # Weighted combination
-    tw = CONFIG.TWITTER_WEIGHT
-    rd = CONFIG.REDDIT_WEIGHT
+    # Calculate combined FSI
+    twitter_present = combined['fsi_twitter'].notna()
+    gt_present = combined['fsi_gt'].notna()
+    both_present = twitter_present & gt_present
 
-    # Handle cases where one platform is missing
-    twitter_present = combined['fsi_raw_twitter'].notna()
-    reddit_present = combined['fsi_raw_reddit'].notna()
-    both_present = twitter_present & reddit_present
-
-    combined['fsi_raw'] = np.nan
-    combined.loc[both_present, 'fsi_raw'] = (
-        combined.loc[both_present, 'fsi_raw_twitter'] * tw +
-        combined.loc[both_present, 'fsi_raw_reddit'] * rd
+    combined['fsi_combined'] = np.nan
+    combined.loc[both_present, 'fsi_combined'] = (
+        combined.loc[both_present, 'fsi_twitter'] * twitter_weight +
+        combined.loc[both_present, 'fsi_gt'] * gt_weight
     )
-    combined.loc[twitter_present & ~reddit_present, 'fsi_raw'] = combined.loc[twitter_present & ~reddit_present, 'fsi_raw_twitter']
-    combined.loc[reddit_present & ~twitter_present, 'fsi_raw'] = combined.loc[reddit_present & ~twitter_present, 'fsi_raw_reddit']
 
-    # Sum posts
-    combined['n_financial'] = combined['n_financial_twitter'].fillna(0) + combined['n_financial_reddit'].fillna(0)
-    combined['n_stress'] = combined['n_stress_twitter'].fillna(0) + combined['n_stress_reddit'].fillna(0)
+    # If only one source available, use it
+    combined.loc[twitter_present & ~gt_present, 'fsi_combined'] = (
+        combined.loc[twitter_present & ~gt_present, 'fsi_twitter']
+    )
+    combined.loc[gt_present & ~twitter_present, 'fsi_combined'] = (
+        combined.loc[gt_present & ~twitter_present, 'fsi_gt']
+    )
 
     combined = combined.sort_values('date').reset_index(drop=True)
 
     return combined
+
+
+def calculate_monthly_fsi(weekly_df: pd.DataFrame, fsi_col: str = 'fsi') -> pd.DataFrame:
+    """Aggregate weekly FSI to monthly."""
+    df = weekly_df.copy()
+    df['month'] = pd.to_datetime(df['date']).dt.to_period('M')
+
+    monthly = df.groupby('month').agg({
+        fsi_col: 'mean',
+    }).reset_index()
+
+    monthly['month'] = monthly['month'].dt.to_timestamp()
+    monthly = monthly.rename(columns={fsi_col: 'fsi'})
+
+    return monthly
 
 
 # =============================================================================
@@ -380,7 +414,13 @@ def calculate_correlation(fsi: pd.Series, vol: pd.Series) -> Dict:
     aligned = pd.DataFrame({'fsi': fsi, 'vol': vol}).dropna()
 
     if len(aligned) < 10:
-        return {'pearson': np.nan, 'spearman': np.nan, 'n': len(aligned)}
+        return {
+            'pearson': np.nan,
+            'pearson_pvalue': np.nan,
+            'spearman': np.nan,
+            'spearman_pvalue': np.nan,
+            'n': len(aligned),
+        }
 
     pearson_r, pearson_p = stats.pearsonr(aligned['fsi'], aligned['vol'])
     spearman_r, spearman_p = stats.spearmanr(aligned['fsi'], aligned['vol'])
@@ -395,93 +435,105 @@ def calculate_correlation(fsi: pd.Series, vol: pd.Series) -> Dict:
 
 
 def validate_fsi(
-    daily_fsi: pd.DataFrame,
+    weekly_fsi: pd.DataFrame,
     market_data: pd.DataFrame,
-    monthly_fsi: Optional[pd.DataFrame] = None,
+    fsi_col: str = 'fsi',
 ) -> Dict:
     """Validate FSI against market volatility."""
     results = {}
 
-    # Merge for daily correlation
-    daily_merged = pd.merge(
-        daily_fsi[['date', 'fsi']],
-        market_data[['date', CONFIG.VOLATILITY_COLUMN]],
+    # Aggregate market data to weekly
+    market_data = market_data.copy()
+    market_data['week'] = pd.to_datetime(market_data['date']).dt.to_period('W')
+    market_weekly = market_data.groupby('week')[CONFIG.VOLATILITY_COLUMN].mean().reset_index()
+
+    # Add week period to FSI data for matching
+    weekly_fsi = weekly_fsi.copy()
+    weekly_fsi['week'] = pd.to_datetime(weekly_fsi['date']).dt.to_period('W')
+
+    # Merge on week period instead of exact date
+    merged = pd.merge(
+        weekly_fsi[['week', fsi_col]],
+        market_weekly[['week', CONFIG.VOLATILITY_COLUMN]],
+        on='week',
+        how='inner',
+    )
+
+    results['weekly'] = calculate_correlation(
+        merged[fsi_col],
+        merged[CONFIG.VOLATILITY_COLUMN],
+    )
+
+    # Monthly
+    monthly_fsi = calculate_monthly_fsi(weekly_fsi, fsi_col)
+    market_data['month'] = pd.to_datetime(market_data['date']).dt.to_period('M')
+    market_monthly = market_data.groupby('month')[CONFIG.VOLATILITY_COLUMN].mean().reset_index()
+    market_monthly['month'] = market_monthly['month'].dt.to_timestamp()
+
+    monthly_merged = pd.merge(
+        monthly_fsi.rename(columns={'month': 'date'}),
+        market_monthly.rename(columns={'month': 'date'}),
         on='date',
         how='inner',
     )
 
-    results['daily'] = calculate_correlation(
-        daily_merged['fsi'],
-        daily_merged[CONFIG.VOLATILITY_COLUMN],
+    results['monthly'] = calculate_correlation(
+        monthly_merged['fsi'],
+        monthly_merged[CONFIG.VOLATILITY_COLUMN],
     )
 
-    # Monthly correlation
-    if monthly_fsi is not None:
-        market_data['month'] = pd.to_datetime(market_data['date']).dt.to_period('M')
-        monthly_vol = market_data.groupby('month')[CONFIG.VOLATILITY_COLUMN].mean().reset_index()
-        monthly_vol['month'] = monthly_vol['month'].dt.to_timestamp()
-
-        monthly_merged = pd.merge(
-            monthly_fsi.rename(columns={'month': 'date'}),
-            monthly_vol.rename(columns={'month': 'date'}),
-            on='date',
-            how='inner',
-        )
-
-        results['monthly'] = calculate_correlation(
-            monthly_merged['fsi'],
-            monthly_merged[CONFIG.VOLATILITY_COLUMN],
-        )
-
-    # FSI statistics
+    # FSI stats
     results['fsi_stats'] = {
-        'mean': daily_fsi['fsi'].mean(),
-        'std': daily_fsi['fsi'].std(),
-        'min': daily_fsi['fsi'].min(),
-        'max': daily_fsi['fsi'].max(),
-        'n_days': len(daily_fsi),
+        'mean': weekly_fsi[fsi_col].mean(),
+        'std': weekly_fsi[fsi_col].std(),
+        'min': weekly_fsi[fsi_col].min(),
+        'max': weekly_fsi[fsi_col].max(),
+        'n_weeks': len(weekly_fsi),
     }
 
     return results
 
 
-def print_validation_report(results: Dict):
-    """Print formatted validation report."""
-    print("\n" + "=" * 60)
-    print("VALIDATION REPORT")
-    print("=" * 60)
+def print_validation_report(results: Dict, source: str = 'Combined'):
+    """Print validation report."""
+    print(f"\n{'=' * 60}")
+    print(f"VALIDATION: {source} FSI")
+    print('=' * 60)
 
-    print("\nCorrelation with Market Volatility:")
+    print("\nCorrelation with IBOVESPA Volatility:")
     print("-" * 40)
 
-    if 'daily' in results:
-        d = results['daily']
-        in_range = CONFIG.TARGET_CORRELATION_MIN <= abs(d['pearson']) <= CONFIG.TARGET_CORRELATION_MAX
-        status = "✓" if in_range else "○"
-        print(f"  Daily (n={d['n']}):")
-        print(f"    Pearson:  r = {d['pearson']:.3f} (p = {d['pearson_pvalue']:.4f}) {status}")
-        print(f"    Spearman: ρ = {d['spearman']:.3f} (p = {d['spearman_pvalue']:.4f})")
+    if 'weekly' in results:
+        w = results['weekly']
+        if w['n'] < 10 or np.isnan(w['pearson']):
+            print(f"  Weekly (n={w['n']}): Insufficient data for correlation")
+        else:
+            in_range = CONFIG.TARGET_CORRELATION_MIN <= abs(w['pearson']) <= CONFIG.TARGET_CORRELATION_MAX
+            status = "✓" if in_range else "○"
+            print(f"  Weekly (n={w['n']}):")
+            print(f"    Pearson:  r = {w['pearson']:.3f} (p = {w['pearson_pvalue']:.4f}) {status}")
+            print(f"    Spearman: ρ = {w['spearman']:.3f} (p = {w['spearman_pvalue']:.4f})")
 
     if 'monthly' in results:
         m = results['monthly']
-        in_range = CONFIG.TARGET_CORRELATION_MIN <= abs(m['pearson']) <= CONFIG.TARGET_CORRELATION_MAX
-        status = "✓" if in_range else "○"
-        print(f"\n  Monthly (n={m['n']}):")
-        print(f"    Pearson:  r = {m['pearson']:.3f} (p = {m['pearson_pvalue']:.4f}) {status}")
-        print(f"    Spearman: ρ = {m['spearman']:.3f} (p = {m['spearman_pvalue']:.4f})")
+        if m['n'] < 10 or np.isnan(m['pearson']):
+            print(f"\n  Monthly (n={m['n']}): Insufficient data for correlation")
+        else:
+            in_range = CONFIG.TARGET_CORRELATION_MIN <= abs(m['pearson']) <= CONFIG.TARGET_CORRELATION_MAX
+            status = "✓" if in_range else "○"
+            print(f"\n  Monthly (n={m['n']}):")
+            print(f"    Pearson:  r = {m['pearson']:.3f} (p = {m['pearson_pvalue']:.4f}) {status}")
+            print(f"    Spearman: ρ = {m['spearman']:.3f} (p = {m['spearman_pvalue']:.4f})")
 
-    print(f"\n  Target Range: {CONFIG.TARGET_CORRELATION_MIN:.2f} - {CONFIG.TARGET_CORRELATION_MAX:.2f}")
+    print(f"\n  Target: {CONFIG.TARGET_CORRELATION_MIN:.2f} - {CONFIG.TARGET_CORRELATION_MAX:.2f}")
 
     if 'fsi_stats' in results:
         s = results['fsi_stats']
         print(f"\nFSI Statistics:")
-        print("-" * 40)
         print(f"  Mean:  {s['mean']:.2f}")
         print(f"  Std:   {s['std']:.2f}")
         print(f"  Range: [{s['min']:.2f}, {s['max']:.2f}]")
-        print(f"  Days:  {s['n_days']}")
-
-    print("=" * 60)
+        print(f"  Weeks: {s['n_weeks']}")
 
 
 # =============================================================================
@@ -489,27 +541,27 @@ def print_validation_report(results: Dict):
 # =============================================================================
 
 def plot_fsi_timeseries(
-    daily_fsi: pd.DataFrame,
-    save_path: str,
-    title: str = 'Financial Stress Index (Combined)',
+    weekly_fsi: pd.DataFrame,
+    fsi_col: str = 'fsi',
+    title: str = 'Financial Stress Index',
+    save_path: str = None,
 ):
     """Plot FSI time series with crisis markers."""
     fig, ax = plt.subplots(figsize=(14, 6))
 
-    # Plot FSI
-    ax.plot(daily_fsi['date'], daily_fsi['fsi'], color='#2E86AB', linewidth=1, label='FSI')
+    ax.plot(weekly_fsi['date'], weekly_fsi[fsi_col], color='#2E86AB', linewidth=1.5, label='FSI')
 
-    # Add rolling average
-    if len(daily_fsi) > 30 and CONFIG.SMOOTHING_WINDOW > 0:
-        rolling = daily_fsi['fsi'].rolling(window=CONFIG.SMOOTHING_WINDOW, center=True).mean()
-        ax.plot(daily_fsi['date'], rolling, color='#E94F37', linewidth=2, label=f'{CONFIG.SMOOTHING_WINDOW}-day MA', alpha=0.8)
+    # Smoothing
+    if len(weekly_fsi) > CONFIG.SMOOTHING_WINDOW:
+        rolling = weekly_fsi[fsi_col].rolling(window=CONFIG.SMOOTHING_WINDOW, center=True).mean()
+        ax.plot(weekly_fsi['date'], rolling, color='#E94F37', linewidth=2,
+                label=f'{CONFIG.SMOOTHING_WINDOW}-week MA', alpha=0.8)
 
-    # Mark crisis periods
+    # Crisis markers
     for (start, end), label in CRISIS_EPISODES.items():
         start_dt = pd.to_datetime(start)
         end_dt = pd.to_datetime(end)
-
-        if daily_fsi['date'].min() <= end_dt and daily_fsi['date'].max() >= start_dt:
+        if weekly_fsi['date'].min() <= end_dt and weekly_fsi['date'].max() >= start_dt:
             ax.axvspan(start_dt, end_dt, alpha=0.15, color='red')
             mid = start_dt + (end_dt - start_dt) / 2
             ax.text(mid, ax.get_ylim()[1] * 0.97, label, ha='center', va='top', fontsize=7, rotation=45)
@@ -523,45 +575,50 @@ def plot_fsi_timeseries(
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
 
     plt.tight_layout()
-    fig.savefig(save_path, dpi=150, bbox_inches='tight')
+    if save_path:
+        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"  Saved: {save_path}")
     plt.close()
-    print(f"  Saved: {save_path}")
 
 
 def plot_fsi_vs_volatility(
-    daily_fsi: pd.DataFrame,
+    weekly_fsi: pd.DataFrame,
     market_data: pd.DataFrame,
-    save_path: str,
+    fsi_col: str = 'fsi',
+    save_path: str = None,
 ):
-    """Plot FSI overlaid with market volatility."""
+    """Plot FSI vs market volatility."""
+    # Aggregate market to weekly
+    market_data = market_data.copy()
+    market_data['week'] = pd.to_datetime(market_data['date']).dt.to_period('W')
+    market_weekly = market_data.groupby('week')[CONFIG.VOLATILITY_COLUMN].mean().reset_index()
+    market_weekly['date'] = market_weekly['week'].dt.to_timestamp()
+
     merged = pd.merge(
-        daily_fsi[['date', 'fsi']],
-        market_data[['date', CONFIG.VOLATILITY_COLUMN]],
+        weekly_fsi[['date', fsi_col]],
+        market_weekly[['date', CONFIG.VOLATILITY_COLUMN]],
         on='date',
         how='inner',
     )
 
     fig, ax1 = plt.subplots(figsize=(14, 6))
 
-    # FSI on left axis
     color1 = '#2E86AB'
-    ax1.plot(merged['date'], merged['fsi'], color=color1, linewidth=1.5, label='FSI')
+    ax1.plot(merged['date'], merged[fsi_col], color=color1, linewidth=1.5, label='FSI')
     ax1.set_xlabel('Date', fontsize=11)
     ax1.set_ylabel('FSI', color=color1, fontsize=11)
     ax1.tick_params(axis='y', labelcolor=color1)
 
-    # Volatility on right axis
     ax2 = ax1.twinx()
     color2 = '#E94F37'
-    ax2.plot(merged['date'], merged[CONFIG.VOLATILITY_COLUMN], color=color2, linewidth=1.5, label='Volatility', alpha=0.7)
-    ax2.set_ylabel('Realized Volatility (%)', color=color2, fontsize=11)
+    ax2.plot(merged['date'], merged[CONFIG.VOLATILITY_COLUMN], color=color2,
+             linewidth=1.5, label='Volatility', alpha=0.7)
+    ax2.set_ylabel('Volatility (%)', color=color2, fontsize=11)
     ax2.tick_params(axis='y', labelcolor=color2)
 
-    # Correlation in title
-    corr = merged['fsi'].corr(merged[CONFIG.VOLATILITY_COLUMN])
-    ax1.set_title(f'FSI vs Market Volatility\n(Correlation: r = {corr:.3f})', fontsize=13, fontweight='bold')
+    corr = merged[fsi_col].corr(merged[CONFIG.VOLATILITY_COLUMN])
+    ax1.set_title(f'FSI vs Market Volatility (r = {corr:.3f})', fontsize=13, fontweight='bold')
 
-    # Combined legend
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
     ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
@@ -570,90 +627,58 @@ def plot_fsi_vs_volatility(
     ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
 
     fig.tight_layout()
-    fig.savefig(save_path, dpi=150, bbox_inches='tight')
+    if save_path:
+        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"  Saved: {save_path}")
     plt.close()
-    print(f"  Saved: {save_path}")
 
 
-def plot_scatter(
-    daily_fsi: pd.DataFrame,
-    market_data: pd.DataFrame,
-    save_path: str,
+def plot_fsi_components(
+    combined_df: pd.DataFrame,
+    save_path: str = None,
 ):
-    """Plot scatter correlation."""
-    merged = pd.merge(
-        daily_fsi[['date', 'fsi']],
-        market_data[['date', CONFIG.VOLATILITY_COLUMN]],
-        on='date',
-    ).dropna()
-
-    fig, ax = plt.subplots(figsize=(8, 8))
-
-    ax.scatter(merged[CONFIG.VOLATILITY_COLUMN], merged['fsi'], alpha=0.4, s=15, color='#2E86AB')
-
-    # Regression line
-    z = np.polyfit(merged[CONFIG.VOLATILITY_COLUMN], merged['fsi'], 1)
-    p = np.poly1d(z)
-    x_line = np.linspace(merged[CONFIG.VOLATILITY_COLUMN].min(), merged[CONFIG.VOLATILITY_COLUMN].max(), 100)
-    ax.plot(x_line, p(x_line), 'r--', alpha=0.8, linewidth=2, label='Regression')
-
-    corr = merged['fsi'].corr(merged[CONFIG.VOLATILITY_COLUMN])
-
-    ax.set_xlabel('Market Volatility (%)', fontsize=11)
-    ax.set_ylabel('FSI', fontsize=11)
-    ax.set_title(f'FSI vs Volatility Scatter\n(r = {corr:.3f})', fontsize=13, fontweight='bold')
-    ax.legend()
-
-    plt.tight_layout()
-    fig.savefig(save_path, dpi=150, bbox_inches='tight')
-    plt.close()
-    print(f"  Saved: {save_path}")
-
-
-def plot_monthly_comparison(
-    twitter_monthly: pd.DataFrame,
-    reddit_monthly: pd.DataFrame,
-    combined_monthly: pd.DataFrame,
-    save_path: str,
-):
-    """Plot monthly FSI comparison across platforms."""
+    """Plot Twitter vs Google Trends FSI components."""
     fig, ax = plt.subplots(figsize=(14, 6))
 
-    if twitter_monthly is not None and len(twitter_monthly) > 0:
-        ax.plot(twitter_monthly['month'], twitter_monthly['fsi'], marker='o', markersize=4, label='Twitter', alpha=0.8)
+    if 'fsi_twitter' in combined_df.columns:
+        ax.plot(combined_df['date'], combined_df['fsi_twitter'],
+                color='#1DA1F2', linewidth=1.5, label='Twitter FSI', alpha=0.8)
 
-    if reddit_monthly is not None and len(reddit_monthly) > 0:
-        ax.plot(reddit_monthly['month'], reddit_monthly['fsi'], marker='s', markersize=4, label='Reddit', alpha=0.8)
+    if 'fsi_gt' in combined_df.columns:
+        ax.plot(combined_df['date'], combined_df['fsi_gt'],
+                color='#4285F4', linewidth=1.5, label='Google Trends FSI', alpha=0.8)
 
-    if combined_monthly is not None and len(combined_monthly) > 0:
-        ax.plot(combined_monthly['month'], combined_monthly['fsi'], marker='D', markersize=4, linewidth=2, label='Combined', color='black')
+    if 'fsi_combined' in combined_df.columns:
+        ax.plot(combined_df['date'], combined_df['fsi_combined'],
+                color='#E94F37', linewidth=2, label='Combined FSI')
 
-    ax.set_xlabel('Month', fontsize=11)
+    ax.set_xlabel('Date', fontsize=11)
     ax.set_ylabel('FSI', fontsize=11)
-    ax.set_title('Monthly FSI by Platform', fontsize=13, fontweight='bold')
-    ax.legend()
+    ax.set_title('FSI Components: Twitter vs Google Trends', fontsize=13, fontweight='bold')
+    ax.legend(loc='upper left')
 
     ax.xaxis.set_major_locator(mdates.YearLocator())
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
 
     plt.tight_layout()
-    fig.savefig(save_path, dpi=150, bbox_inches='tight')
+    if save_path:
+        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"  Saved: {save_path}")
     plt.close()
-    print(f"  Saved: {save_path}")
 
 
 # =============================================================================
-# MAIN EXECUTION
+# DATA LOADING
 # =============================================================================
 
 def load_data() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Load all data files."""
     twitter_path = CONFIG.DATA_DIR / 'twitter_data.csv'
-    reddit_path = CONFIG.DATA_DIR / 'reddit_data.csv'
+    gt_path = CONFIG.DATA_DIR / 'google_trends_data.csv'
     market_path = CONFIG.DATA_DIR / 'ibovespa_data.csv'
 
     twitter_df = pd.DataFrame()
-    reddit_df = pd.DataFrame()
+    gt_df = pd.DataFrame()
     market_df = pd.DataFrame()
 
     if twitter_path.exists():
@@ -661,188 +686,190 @@ def load_data() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         twitter_df['date'] = pd.to_datetime(twitter_df['date'])
         print(f"  Twitter: {len(twitter_df):,} posts loaded")
     else:
-        print(f"  Twitter: File not found ({twitter_path})")
+        print(f"  Twitter: File not found")
 
-    if reddit_path.exists():
-        reddit_df = pd.read_csv(reddit_path)
-        reddit_df['date'] = pd.to_datetime(reddit_df['date'])
-        print(f"  Reddit: {len(reddit_df):,} posts loaded")
+    if gt_path.exists():
+        gt_df = pd.read_csv(gt_path)
+        gt_df['date'] = pd.to_datetime(gt_df['date'])
+        query_cols = [c for c in gt_df.columns if c not in ['date', 'source', 'isPartial']]
+        print(f"  Google Trends: {len(gt_df)} weeks, {len(query_cols)} queries")
     else:
-        print(f"  Reddit: File not found ({reddit_path})")
+        print(f"  Google Trends: File not found")
 
     if market_path.exists():
         market_df = pd.read_csv(market_path)
         market_df['date'] = pd.to_datetime(market_df['date'])
-        print(f"  IBOVESPA: {len(market_df):,} trading days loaded")
+        print(f"  IBOVESPA: {len(market_df):,} trading days")
     else:
-        print(f"  IBOVESPA: File not found ({market_path})")
+        print(f"  IBOVESPA: File not found")
 
-    return twitter_df, reddit_df, market_df
+    return twitter_df, gt_df, market_df
 
 
 def save_results(
     twitter_daily: pd.DataFrame,
-    reddit_daily: pd.DataFrame,
-    combined_daily: pd.DataFrame,
-    twitter_monthly: pd.DataFrame,
-    reddit_monthly: pd.DataFrame,
-    combined_monthly: pd.DataFrame,
+    gt_weekly: pd.DataFrame,
+    combined_weekly: pd.DataFrame,
+    monthly_fsi: pd.DataFrame,
 ):
-    """Save all results to CSV files."""
+    """Save results to CSV files."""
     CONFIG.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     if twitter_daily is not None and len(twitter_daily) > 0:
         twitter_daily.to_csv(CONFIG.OUTPUT_DIR / 'fsi_twitter_daily.csv', index=False)
-        print(f"  Saved: {CONFIG.OUTPUT_DIR / 'fsi_twitter_daily.csv'}")
+        print(f"  Saved: fsi_twitter_daily.csv")
 
-    if reddit_daily is not None and len(reddit_daily) > 0:
-        reddit_daily.to_csv(CONFIG.OUTPUT_DIR / 'fsi_reddit_daily.csv', index=False)
-        print(f"  Saved: {CONFIG.OUTPUT_DIR / 'fsi_reddit_daily.csv'}")
+    if gt_weekly is not None and len(gt_weekly) > 0:
+        gt_weekly.to_csv(CONFIG.OUTPUT_DIR / 'fsi_google_trends_weekly.csv', index=False)
+        print(f"  Saved: fsi_google_trends_weekly.csv")
 
-    if combined_daily is not None and len(combined_daily) > 0:
-        combined_daily.to_csv(CONFIG.OUTPUT_DIR / 'fsi_combined_daily.csv', index=False)
-        print(f"  Saved: {CONFIG.OUTPUT_DIR / 'fsi_combined_daily.csv'}")
+    if combined_weekly is not None and len(combined_weekly) > 0:
+        combined_weekly.to_csv(CONFIG.OUTPUT_DIR / 'fsi_combined_weekly.csv', index=False)
+        print(f"  Saved: fsi_combined_weekly.csv")
 
-    # Combined monthly
-    monthly_df = pd.DataFrame()
-    if combined_monthly is not None:
-        monthly_df['month'] = combined_monthly['month']
-        monthly_df['fsi_combined'] = combined_monthly['fsi']
-    if twitter_monthly is not None:
-        if 'month' not in monthly_df.columns:
-            monthly_df['month'] = twitter_monthly['month']
-        monthly_df['fsi_twitter'] = twitter_monthly['fsi']
-    if reddit_monthly is not None:
-        if 'month' not in monthly_df.columns:
-            monthly_df['month'] = reddit_monthly['month']
-        monthly_df['fsi_reddit'] = reddit_monthly['fsi']
+    if monthly_fsi is not None and len(monthly_fsi) > 0:
+        monthly_fsi.to_csv(CONFIG.OUTPUT_DIR / 'fsi_monthly.csv', index=False)
+        print(f"  Saved: fsi_monthly.csv")
 
-    if len(monthly_df) > 0:
-        monthly_df.to_csv(CONFIG.OUTPUT_DIR / 'fsi_monthly.csv', index=False)
-        print(f"  Saved: {CONFIG.OUTPUT_DIR / 'fsi_monthly.csv'}")
 
+# =============================================================================
+# MAIN
+# =============================================================================
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Calculate Financial Stress Index',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description='Calculate Financial Stress Index from Twitter + Google Trends',
     )
 
-    parser.add_argument('--min-posts', type=int, default=5, help='Minimum posts per day')
-    parser.add_argument('--twitter-weight', type=float, default=0.6, help='Twitter weight in combined FSI')
-    parser.add_argument('--reddit-weight', type=float, default=0.4, help='Reddit weight in combined FSI')
-    parser.add_argument('--smoothing', type=int, default=7, help='Smoothing window (0=none)')
-    parser.add_argument('--no-plots', action='store_true', help='Skip generating plots')
+    parser.add_argument('--min-posts', type=int, default=5, help='Min tweets per day')
+    parser.add_argument('--twitter-weight', type=float, default=0.5, help='Twitter weight')
+    parser.add_argument('--gt-weight', type=float, default=0.5, help='Google Trends weight')
+    parser.add_argument('--aggregation', type=str, default='weighted_average',
+                        choices=['average', 'weighted_average', 'pca'],
+                        help='Google Trends aggregation method')
+    parser.add_argument('--no-plots', action='store_true', help='Skip plots')
 
     args = parser.parse_args()
 
     # Update config
     CONFIG.MIN_POSTS_PER_DAY = args.min_posts
     CONFIG.TWITTER_WEIGHT = args.twitter_weight
-    CONFIG.REDDIT_WEIGHT = args.reddit_weight
-    CONFIG.SMOOTHING_WINDOW = args.smoothing
+    CONFIG.GT_WEIGHT = args.gt_weight
+    CONFIG.GT_AGGREGATION = args.aggregation
 
-    # Header
     print("=" * 60)
-    print("FINANCIAL STRESS INDEX - CALCULATION")
-    print("Baker et al. (2019) Methodology")
+    print("FINANCIAL STRESS INDEX CALCULATION")
+    print("Twitter + Google Trends (Baker et al. 2019 + Da et al. 2011)")
     print("=" * 60)
 
-    # Dictionary stats
     stats = get_dictionary_stats()
-    print(f"\n📚 Dictionary: {stats['financial_terms']} financial, {stats['stress_terms']} stress, {stats['negative_terms']} negative terms")
+    print(f"\n📚 Dictionaries: {stats['total_unique']} terms")
+    print(f"🔍 Google Trends: {stats['google_trends_queries']} queries")
 
-    # Configuration
     print(f"\n⚙️  Configuration:")
-    print(f"   Min posts/day: {CONFIG.MIN_POSTS_PER_DAY}")
     print(f"   Twitter weight: {CONFIG.TWITTER_WEIGHT}")
-    print(f"   Reddit weight: {CONFIG.REDDIT_WEIGHT}")
-    print(f"   Smoothing window: {CONFIG.SMOOTHING_WINDOW}")
+    print(f"   Google Trends weight: {CONFIG.GT_WEIGHT}")
+    print(f"   GT aggregation: {CONFIG.GT_AGGREGATION}")
 
     # Load data
     print(f"\n📁 Loading data...")
-    twitter_df, reddit_df, market_df = load_data()
+    twitter_df, gt_df, market_df = load_data()
 
-    if twitter_df.empty and reddit_df.empty:
-        print("\n❌ No social media data found. Run collect_data.py first:")
-        print("   python scripts/collect_data.py --synthetic")
-        return
+    twitter_daily = None
+    twitter_weekly = None
+    gt_weekly = None
+    combined_weekly = None
 
     # Process Twitter
-    twitter_daily = None
-    twitter_monthly = None
     if not twitter_df.empty:
         print(f"\n🐦 Processing Twitter...")
-        twitter_classified = classify_dataframe(twitter_df)
+        twitter_classified = classify_twitter_dataframe(twitter_df)
         n_fin = twitter_classified['is_financial'].sum()
         n_stress = twitter_classified['is_stress'].sum()
         print(f"    Financial: {n_fin:,} ({n_fin/len(twitter_classified)*100:.1f}%)")
         print(f"    Stress: {n_stress:,} ({n_stress/n_fin*100:.1f}% of financial)")
 
-        twitter_daily = calculate_daily_fsi(twitter_classified, weight_column='followers', platform='twitter')
+        twitter_daily = calculate_twitter_daily_fsi(twitter_classified)
         twitter_daily['fsi'] = standardize_fsi(twitter_daily['fsi_raw'])
-        twitter_monthly = calculate_monthly_fsi(twitter_daily)
 
-    # Process Reddit
-    reddit_daily = None
-    reddit_monthly = None
-    if not reddit_df.empty:
-        print(f"\n👽 Processing Reddit...")
-        reddit_classified = classify_dataframe(reddit_df)
-        n_fin = reddit_classified['is_financial'].sum()
-        n_stress = reddit_classified['is_stress'].sum()
-        print(f"    Financial: {n_fin:,} ({n_fin/len(reddit_classified)*100:.1f}%)")
-        print(f"    Stress: {n_stress:,} ({n_stress/n_fin*100:.1f}% of financial)")
+    # Process Google Trends
+    if not gt_df.empty:
+        print(f"\n🔍 Processing Google Trends...")
+        gt_weekly = calculate_google_trends_fsi(gt_df, method=CONFIG.GT_AGGREGATION)
+        gt_weekly['fssvi'] = standardize_fsi(gt_weekly['fssvi_raw'])
 
-        reddit_daily = calculate_daily_fsi(reddit_classified, weight_column='upvotes', platform='reddit')
-        reddit_daily['fsi'] = standardize_fsi(reddit_daily['fsi_raw'])
-        reddit_monthly = calculate_monthly_fsi(reddit_daily)
-
-    # Combine platforms
-    combined_daily = None
-    combined_monthly = None
-
-    if twitter_daily is not None and reddit_daily is not None:
-        print(f"\n🔗 Combining platforms...")
-        combined_daily = combine_platforms(twitter_daily, reddit_daily)
-        combined_daily['fsi'] = standardize_fsi(combined_daily['fsi_raw'])
-        combined_monthly = calculate_monthly_fsi(combined_daily)
+    # Combine
+    if twitter_daily is not None and gt_weekly is not None:
+        print(f"\n🔗 Combining Twitter + Google Trends...")
+        combined_weekly = combine_twitter_and_google_trends(
+            twitter_daily, gt_weekly,
+            twitter_weight=CONFIG.TWITTER_WEIGHT,
+            gt_weight=CONFIG.GT_WEIGHT,
+        )
+        combined_weekly['fsi'] = standardize_fsi(combined_weekly['fsi_combined'])
     elif twitter_daily is not None:
-        combined_daily = twitter_daily
-        combined_monthly = twitter_monthly
-    elif reddit_daily is not None:
-        combined_daily = reddit_daily
-        combined_monthly = reddit_monthly
+        # Aggregate Twitter to weekly
+        twitter_daily_copy = twitter_daily.copy()
+        twitter_daily_copy['week'] = pd.to_datetime(twitter_daily_copy['date']).dt.to_period('W')
+        combined_weekly = twitter_daily_copy.groupby('week').agg({'fsi': 'mean'}).reset_index()
+        combined_weekly['date'] = combined_weekly['week'].dt.to_timestamp()
+        combined_weekly = combined_weekly.drop('week', axis=1)
+    elif gt_weekly is not None:
+        combined_weekly = gt_weekly.rename(columns={'fssvi': 'fsi'})
 
     # Validate
-    if combined_daily is not None and not market_df.empty:
-        print(f"\n📊 Validating against IBOVESPA volatility...")
-        validation = validate_fsi(combined_daily, market_df, combined_monthly)
-        print_validation_report(validation)
+    if combined_weekly is not None and not market_df.empty:
+        print(f"\n📊 Validating...")
 
-    # Save results
+        # Validate combined
+        validation = validate_fsi(combined_weekly, market_df, 'fsi')
+        print_validation_report(validation, 'Combined')
+
+        # Validate individual components
+        if twitter_daily is not None:
+            tw_weekly = twitter_daily.copy()
+            tw_weekly['week'] = pd.to_datetime(tw_weekly['date']).dt.to_period('W')
+            tw_weekly = tw_weekly.groupby('week').agg({'fsi': 'mean'}).reset_index()
+            tw_weekly['date'] = tw_weekly['week'].dt.to_timestamp()
+            tw_validation = validate_fsi(tw_weekly, market_df, 'fsi')
+            print_validation_report(tw_validation, 'Twitter')
+
+        if gt_weekly is not None:
+            gt_validation = validate_fsi(gt_weekly.rename(columns={'fssvi': 'fsi'}), market_df, 'fsi')
+            print_validation_report(gt_validation, 'Google Trends')
+
+    # Monthly
+    monthly_fsi = None
+    if combined_weekly is not None:
+        monthly_fsi = calculate_monthly_fsi(combined_weekly, 'fsi')
+
+    # Save
     print(f"\n💾 Saving results...")
-    save_results(twitter_daily, reddit_daily, combined_daily, twitter_monthly, reddit_monthly, combined_monthly)
+    save_results(twitter_daily, gt_weekly, combined_weekly, monthly_fsi)
 
-    # Generate plots
-    if not args.no_plots and combined_daily is not None:
-        print(f"\n📈 Generating visualizations...")
+    # Plots
+    if not args.no_plots and combined_weekly is not None:
+        print(f"\n📈 Generating plots...")
         CONFIG.PLOTS_DIR.mkdir(parents=True, exist_ok=True)
 
-        plot_fsi_timeseries(combined_daily, CONFIG.PLOTS_DIR / 'fsi_timeseries.png')
+        plot_fsi_timeseries(
+            combined_weekly, 'fsi', 'Financial Stress Index (Combined)',
+            CONFIG.PLOTS_DIR / 'fsi_timeseries.png'
+        )
 
         if not market_df.empty:
-            plot_fsi_vs_volatility(combined_daily, market_df, CONFIG.PLOTS_DIR / 'fsi_vs_volatility.png')
-            plot_scatter(combined_daily, market_df, CONFIG.PLOTS_DIR / 'fsi_scatter.png')
+            plot_fsi_vs_volatility(
+                combined_weekly, market_df, 'fsi',
+                CONFIG.PLOTS_DIR / 'fsi_vs_volatility.png'
+            )
 
-        if twitter_monthly is not None or reddit_monthly is not None:
-            plot_monthly_comparison(twitter_monthly, reddit_monthly, combined_monthly, CONFIG.PLOTS_DIR / 'fsi_monthly_comparison.png')
+        if 'fsi_twitter' in combined_weekly.columns or 'fsi_gt' in combined_weekly.columns:
+            plot_fsi_components(combined_weekly, CONFIG.PLOTS_DIR / 'fsi_components.png')
 
-    # Summary
     print("\n" + "=" * 60)
     print("✅ FSI CALCULATION COMPLETE")
     print("=" * 60)
-    print(f"\n   Results: {CONFIG.OUTPUT_DIR}/")
+    print(f"   Results: {CONFIG.OUTPUT_DIR}/")
     print(f"   Plots:   {CONFIG.PLOTS_DIR}/")
     print("=" * 60)
 
