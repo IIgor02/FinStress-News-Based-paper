@@ -349,7 +349,7 @@ STRESS_QUERIES_TIER5 = [
     "como proteger investimentos", # How to protect investments
 ]
 
-# All Google Trends queries combined
+# All Google Trends queries combined (for dictionary-based FSI)
 STRESS_QUERIES_GT = (
     STRESS_QUERIES_TIER1 +
     STRESS_QUERIES_TIER2 +
@@ -374,6 +374,97 @@ QUERY_WEIGHTS = {
     "bolsa despenca": 1.2,
     # Tier 3-5: Weight 1.0 (default)
 }
+
+# =============================================================================
+# PART 3: EXPANDED QUERIES FOR ML APPROACH (García et al. 2023)
+# =============================================================================
+# ~100 queries for machine learning approach - no pre-defined weights
+# The LASSO model will learn which queries predict market declines
+
+# General Financial Crisis (15 queries)
+ML_QUERIES_CRISIS = [
+    "crise financeira", "crise econômica", "crise brasil",
+    "colapso econômico", "recessão", "recessão brasil",
+    "depressão econômica", "crash financeiro", "pânico financeiro",
+    "instabilidade econômica", "turbulência econômica",
+    "caos econômico", "desastre econômico", "catástrofe financeira",
+    "crise sistêmica",
+]
+
+# Stock Market Stress (18 queries)
+ML_QUERIES_STOCK_MARKET = [
+    "queda bolsa", "queda ibovespa", "crash bolsa",
+    "derretimento bolsa", "sangria bolsa", "desabamento ibovespa",
+    "volatilidade bolsa", "pânico bolsa", "sell off brasil",
+    "bear market", "mercado baixista", "correção mercado",
+    "circuit breaker", "circuit breaker b3", "pregão suspenso",
+    "ibovespa despenca", "bolsa desaba", "bolsa cai",
+]
+
+# Banking/Credit Stress (12 queries)
+ML_QUERIES_BANKING = [
+    "crise bancária", "corrida bancária", "banco quebra",
+    "inadimplência", "calote", "crédito escasso",
+    "credit crunch brasil", "falta crédito", "aperto crédito",
+    "spread bancário alto", "juros altos", "crédito caro",
+]
+
+# Sovereign/Fiscal Stress (14 queries)
+ML_QUERIES_SOVEREIGN = [
+    "risco default brasil", "default brasil", "calote governo",
+    "dívida pública brasil", "rombo fiscal", "déficit fiscal",
+    "rebaixamento rating", "rating brasil rebaixado", "moody's brasil",
+    "fitch brasil", "s&p brasil rebaixamento", "risco soberano",
+    "embi brasil", "risco país brasil",
+]
+
+# Currency/FX Stress (12 queries)
+ML_QUERIES_CURRENCY = [
+    "dólar dispara", "dólar sobe", "dólar alto",
+    "desvalorização real", "real fraco", "real desvaloriza",
+    "fuga capitais", "fuga dólares", "especulação cambial",
+    "crise cambial", "ataque especulativo", "câmbio brasil crise",
+]
+
+# Political/Policy Uncertainty (11 queries)
+ML_QUERIES_POLITICAL = [
+    "impeachment brasil", "crise política brasil",
+    "instabilidade política", "escândalo corrupção",
+    "lava jato", "petrobras escândalo", "incerteza política",
+    "reforma previdência", "reforma tributária", "greve geral",
+    "protestos brasil",
+]
+
+# Macro Indicators Stress (12 queries)
+ML_QUERIES_MACRO = [
+    "inflação brasil alta", "inflação alta", "hiperinflação brasil",
+    "desemprego brasil alto", "desemprego alto", "pib brasil cai",
+    "recessão técnica brasil", "crescimento negativo", "queda pib",
+    "selic alta", "copom aumenta juros", "juros brasil alto",
+]
+
+# Investor Sentiment/Behavior (10 queries)
+ML_QUERIES_SENTIMENT = [
+    "vender ações agora", "hora de vender", "mercado vai cair",
+    "proteção investimentos", "como proteger carteira", "sair da bolsa",
+    "medo mercado", "pessimismo bolsa", "investidores pessimistas",
+    "fuga investidores",
+]
+
+# All queries for ML approach (~100 queries)
+ML_QUERIES_ALL = (
+    ML_QUERIES_CRISIS +
+    ML_QUERIES_STOCK_MARKET +
+    ML_QUERIES_BANKING +
+    ML_QUERIES_SOVEREIGN +
+    ML_QUERIES_CURRENCY +
+    ML_QUERIES_POLITICAL +
+    ML_QUERIES_MACRO +
+    ML_QUERIES_SENTIMENT
+)
+
+# Remove duplicates while preserving order
+ML_QUERIES_ALL = list(dict.fromkeys(ML_QUERIES_ALL))
 
 # =============================================================================
 # CRISIS EPISODES FOR BRAZIL (For Visualization)
@@ -420,6 +511,7 @@ def get_dictionary_stats() -> dict:
         'negative_terms': len(NEGATIVE_TERMS),
         'total_unique': len(all_terms),
         'google_trends_queries': len(STRESS_QUERIES_GT),
+        'ml_queries': len(ML_QUERIES_ALL),
         'overlap_stress_negative': len(
             DICTIONARIES['stress'] & DICTIONARIES['negative']
         ),

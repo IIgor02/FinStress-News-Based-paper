@@ -1,18 +1,32 @@
 # Financial Stress Index (FSI) for Brazil
 
-Dictionary-based Financial Stress Index using Google Trends search volume data for Brazil, following Da, Engelberg & Gao (2011) methodology.
+Two complementary Financial Stress Indices using Google Trends search volume data for Brazil.
+
+## Methods
+
+### 1. Dictionary-Based FSI (Da et al. 2011)
+- Pre-defined stress queries with tier-based weights
+- 25 queries in 5 tiers
+- Simple weighted aggregation
+
+### 2. ML-Generated FSI (García et al. 2023)
+- LASSO regression learns which queries predict market declines
+- ~100 queries, automatic feature selection
+- Data-driven approach
 
 ## Quick Start
 
 ```bash
-# 1. Install dependencies
+# Install dependencies
 pip install -r requirements.txt
 
-# 2. Collect data (real Google Trends + IBOVESPA)
-python scripts/collect_data.py
-
-# 3. Calculate FSI
+# === DICTIONARY-BASED FSI ===
+python scripts/collect_data.py --synthetic
 python scripts/run_fsi.py
+
+# === ML-BASED FSI ===
+python scripts/collect_data.py --ml --synthetic
+python scripts/ml_fsi.py
 ```
 
 ## Project Structure
@@ -20,12 +34,13 @@ python scripts/run_fsi.py
 ```
 FinStress-News-Based-paper/
 ├── scripts/
-│   ├── dictionaries.py    # 25 Portuguese stress queries (5 tiers)
-│   ├── collect_data.py    # Google Trends + IBOVESPA collection
-│   └── run_fsi.py         # FSI calculation and validation
+│   ├── dictionaries.py    # Query definitions (25 + 104 queries)
+│   ├── collect_data.py    # Data collection
+│   ├── run_fsi.py         # Dictionary-based FSI
+│   └── ml_fsi.py          # ML-based FSI (LASSO)
 ├── data/raw/              # Input data
 ├── output/
-│   ├── results/           # CSV outputs (fsi_weekly.csv, fsi_monthly.csv)
+│   ├── results/           # CSV outputs
 │   └── plots/             # Visualizations
 └── requirements.txt
 ```
@@ -33,67 +48,76 @@ FinStress-News-Based-paper/
 ## Data Collection
 
 ```bash
-# Collect real data from Google Trends + Yahoo Finance
+# Dictionary method (25 queries)
 python scripts/collect_data.py
 
-# Or generate synthetic data for testing (no internet)
-python scripts/collect_data.py --synthetic
+# ML method (104 queries)
+python scripts/collect_data.py --ml
 
-# Custom date range
-python scripts/collect_data.py --start-date 2015-01-01 --end-date 2025-12-31
+# Synthetic data for testing
+python scripts/collect_data.py --synthetic
+python scripts/collect_data.py --ml --synthetic
 ```
 
 ## FSI Calculation
 
+### Dictionary-Based
 ```bash
-# Default (weighted average by tier)
 python scripts/run_fsi.py
-
-# Using PCA
 python scripts/run_fsi.py --aggregation pca
-
-# Skip plots
-python scripts/run_fsi.py --no-plots
 ```
 
-### Aggregation Methods
+### ML-Based (LASSO)
+```bash
+python scripts/ml_fsi.py
+python scripts/ml_fsi.py --train-end 2020-12-31
+```
 
-| Method | Description |
-|--------|-------------|
-| `weighted_average` | Tier 1 = 1.5x, Tier 2 = 1.2x, Tier 3-5 = 1.0x |
-| `average` | Simple average of all queries |
-| `pca` | First principal component |
+## Methodology
 
-## Methodology (Da et al. 2011)
+### Dictionary FSI (Da et al. 2011)
+```
+FSI = weighted_average(SVI × tier_weight)
 
-Uses Google Trends Search Volume Index (SVI) for pre-combined stress queries:
+Tier 1 (Crisis):   1.5x
+Tier 2 (Market):   1.2x
+Tier 3-5:          1.0x
+```
 
-| Tier | Weight | Queries |
-|------|--------|---------|
-| 1 - Crisis | 1.5 | crise financeira, crise economica, panico financeiro... |
-| 2 - Market | 1.2 | queda ibovespa, bolsa despenca, volatilidade bolsa... |
-| 3 - Macro | 1.0 | recessao brasil, divida publica, desemprego brasil... |
-| 4 - Currency | 1.0 | dolar dispara, desvalorizacao real, crise bancaria... |
-| 5 - Sentiment | 1.0 | vender acoes, mercado vai cair, protecao carteira... |
+### ML FSI (García et al. 2023)
+```
+Step 1: r_{t+1} = γ₀ + Σ φ_k × SVI_{k,t}
+Step 2: LASSO selects predictive queries
+Step 3: FSI = -predicted_return
+```
 
 ## Output Files
 
-- `output/results/fsi_weekly.csv` - Weekly FSI values
-- `output/results/fsi_monthly.csv` - Monthly FSI values
-- `output/plots/fsi_timeseries.png` - FSI over time
-- `output/plots/fsi_vs_volatility.png` - FSI vs IBOVESPA volatility
+### Dictionary FSI
+- `fsi_weekly.csv`, `fsi_monthly.csv`
 
-## Crisis Episodes Tracked
+### ML FSI
+- `fsi_ml_weekly.csv` - Weekly ML FSI
+- `ml_coefficients.csv` - Query coefficients
+- `ml_diagnostics.csv` - Model metrics
 
-- 2008-2009: Global Financial Crisis
-- 2015-2016: Brazilian Recession
-- 2017: JBS Scandal
-- 2020: COVID-19 Crash
-- 2021-2024: Various fiscal/political events
+## Query Categories
+
+| Category | Queries | Examples |
+|----------|---------|----------|
+| Crisis | 15 | crise financeira, crash financeiro |
+| Stock Market | 18 | queda ibovespa, circuit breaker |
+| Banking | 12 | crise bancária, inadimplência |
+| Sovereign | 14 | risco default, rebaixamento rating |
+| Currency | 12 | dólar dispara, fuga capitais |
+| Political | 11 | impeachment, lava jato |
+| Macro | 12 | inflação alta, desemprego |
+| Sentiment | 10 | vender ações, mercado vai cair |
 
 ## References
 
-- Da, Z., Engelberg, J., & Gao, P. (2011). In Search of Attention. The Journal of Finance, 66(5), 1461-1499.
+- Da, Z., Engelberg, J., & Gao, P. (2011). In Search of Attention. The Journal of Finance.
+- García, D., Hu, X., & Rohrer, M. (2023). The Color of Finance Words. Journal of Financial Economics.
 
 ## Author
 

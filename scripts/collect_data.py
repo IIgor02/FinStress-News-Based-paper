@@ -42,6 +42,7 @@ sys.path.insert(0, str(_PROJECT_DIR))
 
 from scripts.dictionaries import (
     STRESS_QUERIES_GT,
+    ML_QUERIES_ALL,
     QUERY_WEIGHTS,
     CRISIS_EPISODES,
 )
@@ -291,16 +292,28 @@ def main():
         description='Collect data for Financial Stress Index (Google Trends + IBOVESPA)',
     )
     parser.add_argument('--synthetic', action='store_true', help='Generate synthetic data (no internet)')
+    parser.add_argument('--ml', action='store_true', help='Collect expanded queries for ML approach (~100 queries)')
     parser.add_argument('--start-date', type=str, default='2015-01-01', help='Start date')
     parser.add_argument('--end-date', type=str, default='2025-12-31', help='End date')
 
     args = parser.parse_args()
 
+    # Select query set
+    if args.ml:
+        queries = ML_QUERIES_ALL
+        gt_file = 'google_trends_ml.csv'
+        method_name = "ML (García et al. 2023)"
+    else:
+        queries = STRESS_QUERIES_GT
+        gt_file = 'google_trends_data.csv'
+        method_name = "Dictionary (Da et al. 2011)"
+
     print("=" * 60)
     print("DATA COLLECTION FOR FSI")
-    print("Google Trends + IBOVESPA (Da et al. 2011)")
+    print(f"Method: {method_name}")
     print("=" * 60)
     print(f"\nDate range: {args.start_date} to {args.end_date}")
+    print(f"Queries: {len(queries)}")
     print(f"Output: {DATA_DIR}")
 
     # IBOVESPA
@@ -315,21 +328,24 @@ def main():
 
     # Google Trends
     print("\n" + "-" * 40)
-    print("Google Trends Data")
+    print(f"Google Trends Data ({len(queries)} queries)")
     print("-" * 40)
 
     if args.synthetic:
-        generate_synthetic_google_trends(STRESS_QUERIES_GT, args.start_date, args.end_date, DATA_DIR / 'google_trends_data.csv')
+        generate_synthetic_google_trends(queries, args.start_date, args.end_date, DATA_DIR / gt_file)
     else:
-        collect_google_trends(STRESS_QUERIES_GT, args.start_date, args.end_date, output_path=DATA_DIR / 'google_trends_data.csv')
+        collect_google_trends(queries, args.start_date, args.end_date, output_path=DATA_DIR / gt_file)
 
     print("\n" + "=" * 60)
     print("DATA COLLECTION COMPLETE")
     print("=" * 60)
     print(f"\nFiles saved to: {DATA_DIR}/")
-    print("  - google_trends_data.csv")
+    print(f"  - {gt_file}")
     print("  - ibovespa_data.csv")
-    print("\nNext step: python scripts/run_fsi.py")
+    if args.ml:
+        print("\nNext step: python scripts/ml_fsi.py")
+    else:
+        print("\nNext step: python scripts/run_fsi.py")
     print("=" * 60)
 
 
