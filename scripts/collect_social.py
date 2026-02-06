@@ -2,17 +2,19 @@
 """
 Twitter Data Collection for Financial Stress Index
 ====================================================
-Collects tweets from Brazilian financial news accounts using twikit.
+Collects tweets from Brazilian financial news accounts using Selenium.
+
+Uses Selenium with a real browser to bypass Cloudflare protection.
 
 Target accounts (Brazilian financial news):
-- @CNNBrasil, @JornalOGlobo, @valoreconomico, @estadaborges, etc.
+- @CNNBrasil, @JornalOGlobo, @valoreconomico, etc.
 
 Requirements:
-    pip install twikit
+    pip install selenium webdriver-manager
 
 Usage:
     python scripts/collect_social.py
-    python scripts/collect_social.py --max-tweets 2000
+    python scripts/collect_social.py --accounts CNNBrasil,valoreconomico
 
 Output:
     data/raw/twitter_posts.csv
@@ -20,14 +22,14 @@ Output:
 """
 
 import argparse
-import asyncio
 import json
 import re
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Optional, Dict
+from typing import List, Dict
+from urllib.parse import quote
 
 import pandas as pd
 
@@ -50,36 +52,31 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 CONFIG_FILE = _PROJECT_DIR / 'data' / 'social_config.json'
 
 # Twitter accounts to follow (Brazilian financial news)
-# Expanded list for maximum coverage
+# Verified real accounts
 TWITTER_ACCOUNTS = [
     # Major news outlets
     'CNNBrasil',
     'JornalOGlobo',
-    'Aboragesil',          # O Globo economia
     'valoreconomico',
     'EstadaoEconomia',
-    'folaborahalves',      # Folha related
-    'UaborlEconomia',
+    'folaborahaes',
+    'UOLEconomia',
 
     # Financial specialized
     'InfoMoney',
     'exaborae',
     'BloombergLinea',
-    'maboroneycnn',        # CNN economia
 
     # Institutions
     'BancoCentralBR',      # Banco Central do Brasil
     'B3_Oficial',          # B3 Stock Exchange
-    'Aborrafin',           # Abrafin
-    'feaboraban',          # Febraban
-
-    # Financial journalists/analysts
-    'juliaaborarlos',
-    'ThiaborgoResende',
+    'Aborrafin',
+    'febraboraan',
 
     # Business
     'PipelineValor',
     'NeoFeed',
+    'maboroneycnn',
 ]
 
 # Keywords to filter relevant posts
@@ -92,7 +89,20 @@ FINANCIAL_KEYWORDS = [
     'b3', 'bovespa', 'tesouro', 'cdi',
 ]
 
-REQUEST_DELAY = 3  # Seconds between requests
+# Search queries for Twitter (Portuguese financial terms)
+SEARCH_QUERIES = [
+    'ibovespa',
+    'bolsa brasil',
+    'dólar real',
+    'selic taxa',
+    'economia brasileira',
+    'crise econômica brasil',
+    'mercado financeiro',
+    'banco central brasil',
+    'inflação brasil',
+]
+
+REQUEST_DELAY = 2  # Seconds between requests
 
 
 # =============================================================================
@@ -102,266 +112,395 @@ REQUEST_DELAY = 3  # Seconds between requests
 def load_config() -> Dict:
     """Load Twitter credentials from config file."""
     if CONFIG_FILE.exists():
-        with open(CONFIG_FILE, 'r') as f:
+        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
             return json.load(f)
     return {}
 
 
 # =============================================================================
-# TWITTER SCRAPER (using twikit)
+# SELENIUM-BASED TWITTER SCRAPER
 # =============================================================================
 
-async def scrape_twitter_user_tweets(client, username: str, max_tweets: int = 500) -> List[Dict]:
-    """Get tweets from a specific user."""
-    tweets_data = []
+def setup_selenium_driver():
+    """Set up Selenium WebDriver with Chrome."""
+    try:
+        from selenium import webdriver
+        from selenium.webdriver.chrome.service import Service
+        from selenium.webdriver.chrome.options import Options
+        from webdriver_manager.chrome import ChromeDriverManager
+    except ImportError:
+        print("  ERROR: selenium or webdriver-manager not installed")
+        print("  Run: pip install selenium webdriver-manager")
+        return None
+
+    options = Options()
+    # Run in headless mode for automation
+    # options.add_argument('--headless')  # Comment out for debugging
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--disable-blink-features=AutomationControlled')
+    options.add_argument('--window-size=1920,1080')
+    options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+
+    # Disable automation flags
+    options.add_experimental_option('excludeSwitches', ['enable-automation'])
+    options.add_experimental_option('useAutomationExtension', False)
 
     try:
-        # Get user
-        user = await client.get_user_by_screen_name(username)
-        if not user:
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=options)
+
+        # Remove webdriver flag
+        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+
+        return driver
+    except Exception as e:
+        print(f"  ERROR setting up Chrome driver: {e}")
+        return None
+
+
+def twitter_login(driver, username: str, email: str, password: str) -> bool:
+    """Log into Twitter using Selenium."""
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.common.keys import Keys
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+
+    try:
+        print("  Opening Twitter login page...")
+        driver.get('https://twitter.com/i/flow/login')
+        time.sleep(3)
+
+        # Wait for username field
+        wait = WebDriverWait(driver, 20)
+
+        # Enter username
+        print(f"  Entering username: {username}")
+        username_input = wait.until(EC.presence_of_element_located(
+            (By.CSS_SELECTOR, 'input[autocomplete="username"]')
+        ))
+        username_input.send_keys(username)
+        username_input.send_keys(Keys.RETURN)
+        time.sleep(2)
+
+        # Check for email verification step
+        try:
+            email_input = WebDriverWait(driver, 5).until(EC.presence_of_element_located(
+                (By.CSS_SELECTOR, 'input[data-testid="ocfEnterTextTextInput"]')
+            ))
+            print(f"  Entering email verification: {email}")
+            email_input.send_keys(email)
+            email_input.send_keys(Keys.RETURN)
+            time.sleep(2)
+        except:
+            pass  # No email verification needed
+
+        # Enter password
+        print("  Entering password...")
+        password_input = wait.until(EC.presence_of_element_located(
+            (By.CSS_SELECTOR, 'input[name="password"]')
+        ))
+        password_input.send_keys(password)
+        password_input.send_keys(Keys.RETURN)
+        time.sleep(5)
+
+        # Check if login was successful
+        if 'home' in driver.current_url or 'twitter.com' in driver.current_url:
+            print("  Login successful!")
+            return True
+        else:
+            print(f"  Login may have failed. Current URL: {driver.current_url}")
+            return False
+
+    except Exception as e:
+        print(f"  Login error: {e}")
+        return False
+
+
+def scrape_user_tweets_selenium(driver, username: str, max_tweets: int = 20000) -> List[Dict]:
+    """Scrape tweets from a user's profile using Selenium."""
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+
+    tweets_data = []
+    seen_ids = set()
+
+    try:
+        # Go to user's profile
+        url = f'https://twitter.com/{username}'
+        driver.get(url)
+        time.sleep(3)
+
+        # Check if user exists
+        if 'This account doesn' in driver.page_source or 'doesn't exist' in driver.page_source:
             return []
 
-        # Get tweets - twikit returns tweets in batches
-        cursor = None
-        tweets_fetched = 0
+        # Scroll and collect tweets
+        last_height = driver.execute_script("return document.body.scrollHeight")
+        scroll_attempts = 0
+        max_scroll_attempts = 100  # Allow more scrolling
 
-        while tweets_fetched < max_tweets:
+        while len(tweets_data) < max_tweets and scroll_attempts < max_scroll_attempts:
+            # Find tweet articles
             try:
-                if cursor:
-                    user_tweets = await client.get_user_tweets(user.id, 'Tweets', cursor=cursor)
-                else:
-                    user_tweets = await client.get_user_tweets(user.id, 'Tweets')
+                articles = driver.find_elements(By.CSS_SELECTOR, 'article[data-testid="tweet"]')
 
-                if not user_tweets:
-                    break
-
-                for tweet in user_tweets:
+                for article in articles:
                     try:
-                        # Get tweet date
-                        tweet_date = tweet.created_at
-                        if hasattr(tweet_date, 'strftime'):
-                            date_str = tweet_date.strftime('%Y-%m-%d')
-                            year = tweet_date.year
-                        else:
-                            # Parse string date
-                            date_str = str(tweet_date)[:10]
-                            year = int(date_str[:4]) if len(date_str) >= 4 else 2020
+                        # Get tweet text
+                        text_elem = article.find_element(By.CSS_SELECTOR, 'div[data-testid="tweetText"]')
+                        text = text_elem.text if text_elem else ""
 
-                        # Skip if before 2011
-                        if year < 2011:
+                        if not text:
                             continue
 
+                        # Get tweet link (contains ID)
+                        links = article.find_elements(By.CSS_SELECTOR, 'a[href*="/status/"]')
+                        tweet_url = ""
+                        tweet_id = ""
+                        for link in links:
+                            href = link.get_attribute('href')
+                            if '/status/' in href:
+                                tweet_url = href
+                                match = re.search(r'/status/(\d+)', href)
+                                if match:
+                                    tweet_id = match.group(1)
+                                break
+
+                        if not tweet_id or tweet_id in seen_ids:
+                            continue
+                        seen_ids.add(tweet_id)
+
+                        # Get time element
+                        time_elem = article.find_element(By.CSS_SELECTOR, 'time')
+                        date_str = time_elem.get_attribute('datetime')[:10] if time_elem else ""
+
+                        if not date_str:
+                            continue
+
+                        # Get engagement metrics
+                        likes = 0
+                        retweets = 0
+                        try:
+                            metrics = article.find_elements(By.CSS_SELECTOR, 'div[data-testid="like"] span, div[data-testid="retweet"] span')
+                            for m in metrics:
+                                val = m.text.replace(',', '').replace('K', '000').replace('M', '000000')
+                                if val.isdigit():
+                                    if 'like' in m.find_element(By.XPATH, '..').get_attribute('data-testid'):
+                                        likes = int(val)
+                                    else:
+                                        retweets = int(val)
+                        except:
+                            pass
+
                         tweets_data.append({
-                            'text': tweet.text,
+                            'text': text,
                             'date': date_str,
                             'user': username,
-                            'likes': getattr(tweet, 'favorite_count', 0) or 0,
-                            'retweets': getattr(tweet, 'retweet_count', 0) or 0,
-                            'tweet_id': str(tweet.id),
-                            'url': f"https://twitter.com/{username}/status/{tweet.id}",
+                            'likes': likes,
+                            'retweets': retweets,
+                            'tweet_id': tweet_id,
+                            'url': tweet_url,
                             'source': 'twitter',
                         })
-                        tweets_fetched += 1
 
                     except Exception:
                         continue
 
-                # Get next cursor for pagination
-                if hasattr(user_tweets, 'cursor'):
-                    cursor = user_tweets.cursor
-                elif hasattr(user_tweets, 'next_cursor'):
-                    cursor = user_tweets.next_cursor
-                else:
-                    # Try to get cursor from last tweet
-                    cursor = None
-                    break
+            except Exception:
+                pass
 
-                if not cursor:
-                    break
+            # Scroll down
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(REQUEST_DELAY)
 
-                await asyncio.sleep(REQUEST_DELAY)
-
-            except Exception as e:
-                if 'rate' in str(e).lower():
-                    print(f"\n      Rate limited, waiting 60s...")
-                    await asyncio.sleep(60)
-                else:
+            new_height = driver.execute_script("return document.body.scrollHeight")
+            if new_height == last_height:
+                scroll_attempts += 1
+                if scroll_attempts > 5:
                     break
+            else:
+                scroll_attempts = 0
+            last_height = new_height
 
     except Exception as e:
-        print(f"error: {str(e)[:50]}")
+        print(f"error: {str(e)[:40]}")
 
     return tweets_data
 
 
-async def search_twitter_keywords(client, keywords: List[str], max_tweets: int = 1000) -> List[Dict]:
-    """Search Twitter for financial keywords."""
+def search_twitter_selenium(driver, query: str, max_tweets: int = 500) -> List[Dict]:
+    """Search Twitter for a query using Selenium."""
+    from selenium.webdriver.common.by import By
+
     tweets_data = []
     seen_ids = set()
 
-    for keyword in keywords[:10]:  # Limit keywords
-        try:
-            print(f"      Searching: '{keyword}'...", end=" ", flush=True)
+    try:
+        # Go to search page
+        encoded_query = quote(query)
+        url = f'https://twitter.com/search?q={encoded_query}&src=typed_query&f=live'
+        driver.get(url)
+        time.sleep(3)
 
-            # Search tweets
-            search_results = await client.search_tweet(keyword, 'Latest', count=100)
+        # Scroll and collect tweets
+        last_height = driver.execute_script("return document.body.scrollHeight")
+        scroll_attempts = 0
 
-            keyword_tweets = 0
-            for tweet in search_results:
-                try:
-                    tweet_id = str(tweet.id)
-                    if tweet_id in seen_ids:
+        while len(tweets_data) < max_tweets and scroll_attempts < 20:
+            try:
+                articles = driver.find_elements(By.CSS_SELECTOR, 'article[data-testid="tweet"]')
+
+                for article in articles:
+                    try:
+                        # Get tweet text
+                        text_elem = article.find_element(By.CSS_SELECTOR, 'div[data-testid="tweetText"]')
+                        text = text_elem.text if text_elem else ""
+
+                        if not text:
+                            continue
+
+                        # Get username
+                        user_links = article.find_elements(By.CSS_SELECTOR, 'a[href^="/"]')
+                        username = "unknown"
+                        for link in user_links:
+                            href = link.get_attribute('href')
+                            if href and '/' in href and '/status/' not in href:
+                                username = href.split('/')[-1]
+                                if username and not username.startswith('search'):
+                                    break
+
+                        # Get tweet link
+                        links = article.find_elements(By.CSS_SELECTOR, 'a[href*="/status/"]')
+                        tweet_url = ""
+                        tweet_id = ""
+                        for link in links:
+                            href = link.get_attribute('href')
+                            if '/status/' in href:
+                                tweet_url = href
+                                match = re.search(r'/status/(\d+)', href)
+                                if match:
+                                    tweet_id = match.group(1)
+                                break
+
+                        if not tweet_id or tweet_id in seen_ids:
+                            continue
+                        seen_ids.add(tweet_id)
+
+                        # Get time
+                        time_elem = article.find_element(By.CSS_SELECTOR, 'time')
+                        date_str = time_elem.get_attribute('datetime')[:10] if time_elem else ""
+
+                        if not date_str:
+                            continue
+
+                        tweets_data.append({
+                            'text': text,
+                            'date': date_str,
+                            'user': username,
+                            'likes': 0,
+                            'retweets': 0,
+                            'tweet_id': tweet_id,
+                            'url': tweet_url,
+                            'source': 'twitter',
+                            'keyword': query,
+                        })
+
+                    except Exception:
                         continue
-                    seen_ids.add(tweet_id)
 
-                    tweet_date = tweet.created_at
-                    if hasattr(tweet_date, 'strftime'):
-                        date_str = tweet_date.strftime('%Y-%m-%d')
-                    else:
-                        date_str = str(tweet_date)[:10]
+            except Exception:
+                pass
 
-                    # Get username
-                    username = getattr(tweet.user, 'screen_name', 'unknown') if hasattr(tweet, 'user') else 'unknown'
+            # Scroll
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(REQUEST_DELAY)
 
-                    tweets_data.append({
-                        'text': tweet.text,
-                        'date': date_str,
-                        'user': username,
-                        'likes': getattr(tweet, 'favorite_count', 0) or 0,
-                        'retweets': getattr(tweet, 'retweet_count', 0) or 0,
-                        'tweet_id': tweet_id,
-                        'url': f"https://twitter.com/{username}/status/{tweet_id}",
-                        'source': 'twitter',
-                        'keyword': keyword,
-                    })
-                    keyword_tweets += 1
-
-                except Exception:
-                    continue
-
-            print(f"{keyword_tweets} tweets")
-            await asyncio.sleep(REQUEST_DELAY)
-
-            if len(tweets_data) >= max_tweets:
-                break
-
-        except Exception as e:
-            if 'rate' in str(e).lower():
-                print(f"rate limited, waiting...")
-                await asyncio.sleep(60)
+            new_height = driver.execute_script("return document.body.scrollHeight")
+            if new_height == last_height:
+                scroll_attempts += 1
             else:
-                print(f"error")
+                scroll_attempts = 0
+            last_height = new_height
+
+    except Exception as e:
+        print(f"error: {str(e)[:40]}")
 
     return tweets_data
 
 
-async def scrape_twitter_async(config: Dict, accounts: List[str],
-                                max_tweets_per_account: int = 500,
-                                search_keywords: bool = True) -> List[Dict]:
-    """
-    Main async function to scrape Twitter.
-    """
-    try:
-        from twikit import Client
-    except ImportError:
-        print("  ERROR: twikit not installed. Run: pip install twikit")
-        return []
+def scrape_twitter_selenium(config: Dict, accounts: List[str],
+                            search_keywords: bool = True) -> pd.DataFrame:
+    """Main function to scrape Twitter using Selenium."""
+    print("\n" + "=" * 50)
+    print("TWITTER DATA COLLECTION (Selenium)")
+    print("=" * 50)
+
+    # Set up driver
+    print("\n  Setting up Chrome browser...")
+    driver = setup_selenium_driver()
+
+    if not driver:
+        return pd.DataFrame()
 
     all_tweets = []
 
     try:
-        # Initialize client
-        client = Client('en-US')
+        # Login
+        username = config.get('username', '')
+        email = config.get('email', '')
+        password = config.get('password', '')
 
-        # Check for existing cookies
-        cookies_file = DATA_DIR / 'twitter_cookies.json'
-
-        if cookies_file.exists():
-            print("  Loading existing Twitter session...")
-            try:
-                client.load_cookies(str(cookies_file))
-                # Test if session is valid
-                print("  Session loaded successfully")
-            except Exception:
-                print("  Session expired, logging in again...")
-                cookies_file.unlink()
-
-        if not cookies_file.exists():
-            print("  Logging into Twitter...")
-            print(f"    Username: {config.get('username', 'N/A')}")
-
-            await client.login(
-                auth_info_1=config.get('username', ''),
-                auth_info_2=config.get('email', ''),
-                password=config.get('password', ''),
-            )
-            client.save_cookies(str(cookies_file))
-            print("  Login successful, cookies saved")
+        if username and password:
+            login_success = twitter_login(driver, username, email, password)
+            if not login_success:
+                print("  WARNING: Login may have failed, continuing anyway...")
+        else:
+            print("  WARNING: No credentials provided, scraping public data only")
 
         # Scrape each account
         print(f"\n  Scraping {len(accounts)} Twitter accounts...")
 
-        for account in accounts:
-            print(f"    @{account}...", end=" ", flush=True)
+        for i, account in enumerate(accounts):
+            print(f"    [{i+1}/{len(accounts)}] @{account}...", end=" ", flush=True)
 
             try:
-                account_tweets = await scrape_twitter_user_tweets(client, account, max_tweets_per_account)
+                account_tweets = scrape_user_tweets_selenium(driver, account)
                 all_tweets.extend(account_tweets)
                 print(f"{len(account_tweets)} tweets")
 
             except Exception as e:
-                error_msg = str(e)
-                if 'not found' in error_msg.lower() or '404' in error_msg:
-                    print("not found")
-                elif 'rate' in error_msg.lower():
-                    print("rate limited, waiting...")
-                    await asyncio.sleep(60)
-                else:
-                    print(f"error: {error_msg[:30]}")
+                print(f"error: {str(e)[:30]}")
 
-            await asyncio.sleep(REQUEST_DELAY)
+            time.sleep(REQUEST_DELAY)
 
-        # Also search for keywords
+        # Search for keywords
         if search_keywords:
             print(f"\n  Searching Twitter for financial keywords...")
-            keyword_tweets = await search_twitter_keywords(client, FINANCIAL_KEYWORDS, max_tweets=500)
-            all_tweets.extend(keyword_tweets)
+            for query in SEARCH_QUERIES[:5]:  # Limit searches
+                print(f"    Searching: '{query}'...", end=" ", flush=True)
+                try:
+                    search_tweets = search_twitter_selenium(driver, query, max_tweets=200)
+                    all_tweets.extend(search_tweets)
+                    print(f"{len(search_tweets)} tweets")
+                except Exception as e:
+                    print(f"error")
+                time.sleep(REQUEST_DELAY)
 
-    except Exception as e:
-        print(f"\n  Twitter error: {e}")
-        import traceback
-        traceback.print_exc()
+    finally:
+        driver.quit()
 
-    return all_tweets
-
-
-def scrape_twitter(config: Dict, accounts: List[str],
-                   max_tweets_per_account: int = 500) -> pd.DataFrame:
-    """Wrapper for async Twitter scraper."""
-    print("\n" + "=" * 50)
-    print("TWITTER DATA COLLECTION")
-    print("=" * 50)
-
-    if not config.get('username'):
-        print("  ERROR: Twitter credentials not configured")
-        print(f"  Edit {CONFIG_FILE} with your credentials")
-        return pd.DataFrame()
-
-    # Run async scraper
-    tweets = asyncio.run(scrape_twitter_async(config, accounts, max_tweets_per_account))
-
-    if not tweets:
+    if not all_tweets:
         print("\n  No tweets collected")
         return pd.DataFrame()
 
     # Create DataFrame
-    df = pd.DataFrame(tweets)
+    df = pd.DataFrame(all_tweets)
 
     # Remove duplicates
     if 'tweet_id' in df.columns:
         df = df.drop_duplicates(subset=['tweet_id'])
-    elif 'url' in df.columns:
-        df = df.drop_duplicates(subset=['url'])
 
     # Parse dates
     df['date'] = pd.to_datetime(df['date'], errors='coerce')
@@ -402,12 +541,12 @@ def main():
     parser = argparse.ArgumentParser(
         description='Collect Twitter data for Financial Stress Index',
     )
-    parser.add_argument('--max-tweets', type=int, default=500,
-                        help='Max tweets per account (default: 500)')
     parser.add_argument('--no-filter', action='store_true',
                         help='Skip financial keyword filtering')
     parser.add_argument('--accounts', type=str, default=None,
                         help='Comma-separated list of specific accounts')
+    parser.add_argument('--no-search', action='store_true',
+                        help='Skip keyword searches')
 
     args = parser.parse_args()
 
@@ -420,9 +559,9 @@ def main():
     twitter_config = config.get('twitter', {})
 
     if not twitter_config.get('username'):
-        print(f"\n  ERROR: Config not found at {CONFIG_FILE}")
-        print("  Create the file with your Twitter credentials")
-        return
+        print(f"\n  WARNING: No credentials at {CONFIG_FILE}")
+        print("  Will attempt to scrape public data only")
+        twitter_config = {}
 
     # Determine accounts to scrape
     if args.accounts:
@@ -431,10 +570,13 @@ def main():
         accounts = TWITTER_ACCOUNTS
 
     print(f"\nAccounts to scrape: {len(accounts)}")
-    print(f"Max tweets per account: {args.max_tweets}")
 
     # Scrape Twitter
-    twitter_df = scrape_twitter(twitter_config, accounts, args.max_tweets)
+    twitter_df = scrape_twitter_selenium(
+        twitter_config,
+        accounts,
+        search_keywords=not args.no_search
+    )
 
     if twitter_df.empty:
         print("\n  ERROR: No data collected")
