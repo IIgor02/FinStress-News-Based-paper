@@ -233,7 +233,7 @@ def scrape_user_tweets_selenium(driver, username: str, max_tweets: int = 20000) 
         time.sleep(3)
 
         # Check if user exists
-        if 'This account doesn' in driver.page_source or 'doesn't exist' in driver.page_source:
+        if "This account doesn" in driver.page_source or "doesn't exist" in driver.page_source:
             return []
 
         # Scroll and collect tweets
