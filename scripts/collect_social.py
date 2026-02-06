@@ -52,31 +52,28 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 CONFIG_FILE = _PROJECT_DIR / 'data' / 'social_config.json'
 
 # Twitter accounts to follow (Brazilian financial news)
-# Verified real accounts
+# OFFICIAL VERIFIED ACCOUNTS ONLY
 TWITTER_ACCOUNTS = [
-    # Major news outlets
-    'CNNBrasil',
-    'JornalOGlobo',
-    'valoreconomico',
-    'EstadaoEconomia',
-    'folaborahaes',
-    'UOLEconomia',
+    # Major national newspapers (official accounts)
+    'folha',              # Folha de São Paulo
+    'estadao',            # O Estado de São Paulo
+    'JornalOGlobo',       # O Globo
 
-    # Financial specialized
-    'InfoMoney',
-    'exaborae',
-    'BloombergLinea',
+    # Financial/Economic news (official accounts)
+    'valoreconomico',     # Valor Econômico
+    'InfoMoney',          # InfoMoney
+    'exaborae',             # Exame
+    'BloombergLinea',     # Bloomberg Línea Brasil
 
-    # Institutions
-    'BancoCentralBR',      # Banco Central do Brasil
-    'B3_Oficial',          # B3 Stock Exchange
-    'Aborrafin',
-    'febraboraan',
+    # TV news (official accounts)
+    'CNNBrasil',          # CNN Brasil
+    'GloboNews',          # GloboNews
 
-    # Business
-    'PipelineValor',
-    'NeoFeed',
-    'maboroneycnn',
+    # Government/Institutions (official accounts)
+    'BancoCentralBR',     # Banco Central do Brasil
+    'B3_Oficial',         # B3 Bolsa de Valores
+    'Febraban',           # Febraban
+    'CVM_Oficial',        # CVM
 ]
 
 # Keywords to filter relevant posts
@@ -239,7 +236,8 @@ def scrape_user_tweets_selenium(driver, username: str, max_tweets: int = 20000) 
         # Scroll and collect tweets
         last_height = driver.execute_script("return document.body.scrollHeight")
         scroll_attempts = 0
-        max_scroll_attempts = 100  # Allow more scrolling
+        max_scroll_attempts = 500  # Allow extensive scrolling
+        last_count = 0
 
         while len(tweets_data) < max_tweets and scroll_attempts < max_scroll_attempts:
             # Find tweet articles
@@ -315,10 +313,15 @@ def scrape_user_tweets_selenium(driver, username: str, max_tweets: int = 20000) 
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             time.sleep(REQUEST_DELAY)
 
+            # Show progress every 50 tweets
+            if len(tweets_data) > last_count and len(tweets_data) % 50 == 0:
+                print(f" {len(tweets_data)}...", end="", flush=True)
+                last_count = len(tweets_data)
+
             new_height = driver.execute_script("return document.body.scrollHeight")
             if new_height == last_height:
                 scroll_attempts += 1
-                if scroll_attempts > 5:
+                if scroll_attempts > 20:  # Allow more attempts before giving up
                     break
             else:
                 scroll_attempts = 0
