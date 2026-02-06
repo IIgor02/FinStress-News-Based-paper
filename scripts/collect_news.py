@@ -186,12 +186,12 @@ def selenium_fetch(driver, url: str, wait_time: int = 5) -> Optional[str]:
 # =============================================================================
 
 def scrape_folha_year(session, keyword: str, year: int) -> List[Dict]:
-    """Scrape Folha for a specific year."""
+    """Scrape Folha for a specific year using correct CSS selectors."""
     articles = []
 
-    # Search within a single year for better results
-    start_date = f"01%2F01%2F{year}"
-    end_date = f"31%2F12%2F{year}"
+    # Search within a single year
+    start_date = f"01/01/{year}"
+    end_date = f"31/12/{year}"
 
     for page in range(0, MAX_PAGES_PER_SEARCH):
         offset = page * 25 + 1
@@ -210,55 +210,60 @@ def scrape_folha_year(session, keyword: str, year: int) -> List[Dict]:
         if not soup:
             break
 
-        # Find all links with Folha URLs
-        links = soup.find_all('a', href=True)
+        # Use correct CSS selector: ol.c-search > li
+        search_results = soup.select('ol.c-search > li')
+
+        if not search_results:
+            break
+
         found_articles = 0
+        for item in search_results:
+            try:
+                # Get title from h2.c-headline__title
+                title_elem = item.select_one('h2.c-headline__title')
+                if not title_elem:
+                    continue
+                title = title_elem.get_text(strip=True)
 
-        for link in links:
-            href = link.get('href', '')
-
-            if 'folha.uol.com.br' not in href:
-                continue
-
-            # Must have date pattern in URL
-            date_match = re.search(r'/(\d{4})/(\d{2})/(\d{2})/', href)
-            if not date_match:
-                # Try alternative pattern /YYYY/MM/
-                date_match = re.search(r'/(\d{4})/(\d{2})/', href)
-                if not date_match:
+                if not title or len(title) < 10:
                     continue
 
-            # Skip non-article pages
-            skip_patterns = ['/autor/', '/colunistas/', '/sobre/', '/especial/', '/folha-topicos/']
-            if any(p in href for p in skip_patterns):
+                # Get URL from the content link (not image link)
+                link_elem = item.select_one('div.c-headline__content a[href]')
+                if not link_elem:
+                    link_elem = item.select_one('a[href*="folha.uol.com.br"]')
+                if not link_elem:
+                    continue
+
+                href = link_elem.get('href', '')
+                if 'folha.uol.com.br' not in href:
+                    continue
+
+                # Get date from time element or URL
+                date_elem = item.select_one('time.c-headline__dateline')
+                if date_elem:
+                    # Parse date like "6.fev.2026 às 9h29"
+                    date_text = date_elem.get('datetime', '') or date_elem.get_text(strip=True)
+                    date_str = parse_folha_date(date_text, year)
+                else:
+                    # Extract from URL pattern /YYYY/MM/
+                    date_match = re.search(r'/(\d{4})/(\d{2})/', href)
+                    if date_match:
+                        date_str = f"{date_match.group(1)}-{date_match.group(2)}-15"
+                    else:
+                        date_str = f"{year}-06-15"
+
+                articles.append({
+                    'title': title[:500],
+                    'url': href,
+                    'date': date_str,
+                    'source': 'folha',
+                    'keyword': keyword,
+                })
+                found_articles += 1
+
+            except Exception:
                 continue
-
-            # Get title
-            title = link.get_text(strip=True)
-            if not title or len(title) < 15:
-                parent = link.find_parent(['h2', 'h3', 'div', 'li'])
-                if parent:
-                    title = parent.get_text(strip=True)
-
-            if not title or len(title) < 15:
-                continue
-
-            # Extract date
-            if len(date_match.groups()) == 3:
-                y, m, d = date_match.groups()
-                date_str = f"{y}-{m}-{d}"
-            else:
-                y, m = date_match.groups()
-                date_str = f"{y}-{m}-15"
-
-            articles.append({
-                'title': title[:500],
-                'url': href,
-                'date': date_str,
-                'source': 'folha',
-                'keyword': keyword,
-            })
-            found_articles += 1
 
         if found_articles == 0:
             break
@@ -269,6 +274,34 @@ def scrape_folha_year(session, keyword: str, year: int) -> List[Dict]:
             break
 
     return articles
+
+
+def parse_folha_date(date_text: str, default_year: int) -> str:
+    """Parse Folha date format like '6.fev.2026 às 9h29' to YYYY-MM-DD."""
+    if not date_text:
+        return f"{default_year}-06-15"
+
+    # Month mapping
+    months = {
+        'jan': '01', 'fev': '02', 'mar': '03', 'abr': '04',
+        'mai': '05', 'jun': '06', 'jul': '07', 'ago': '08',
+        'set': '09', 'out': '10', 'nov': '11', 'dez': '12'
+    }
+
+    # Try to parse "DD.MMM.YYYY" format
+    match = re.search(r'(\d{1,2})\.(\w{3})\.(\d{4})', date_text.lower())
+    if match:
+        day = match.group(1).zfill(2)
+        month = months.get(match.group(2), '06')
+        year = match.group(3)
+        return f"{year}-{month}-{day}"
+
+    # Try YYYY-MM-DD format
+    match = re.search(r'(\d{4})-(\d{2})-(\d{2})', date_text)
+    if match:
+        return f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
+
+    return f"{default_year}-06-15"
 
 
 def scrape_folha_archive(session, start_year: int, end_year: int,
