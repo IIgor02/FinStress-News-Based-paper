@@ -6,6 +6,7 @@ Combines multiple FSI methodologies:
 1. Dictionary-based FSI (Google Trends) - Da et al. (2011)
 2. ML-based FSI (LASSO) - García et al. (2023)
 3. News-based FSI (Article analysis) - Baker et al. (2019) style
+4. Social Media FSI (Twitter/Reddit sentiment)
 
 Usage:
     # Run all methods and combine
@@ -109,6 +110,21 @@ def load_news_fsi() -> Optional[pd.DataFrame]:
         return df[['date', 'news_fsi']]
 
     print("  News FSI: Not found (run scripts/news_fsi.py)")
+    return None
+
+
+def load_social_fsi() -> Optional[pd.DataFrame]:
+    """Load social media FSI from social_fsi.py output."""
+    fsi_path = OUTPUT_DIR / 'social_fsi_weekly.csv'
+
+    if fsi_path.exists():
+        df = pd.read_csv(fsi_path)
+        df['date'] = pd.to_datetime(df['date'])
+        if 'social_fsi' in df.columns:
+            print(f"  Social FSI: {len(df)} weeks")
+            return df[['date', 'social_fsi']]
+
+    print("  Social FSI: Not found (run scripts/social_fsi.py)")
     return None
 
 
@@ -479,6 +495,10 @@ def main():
     if news_fsi is not None:
         fsi_dict['news_fsi'] = news_fsi
 
+    social_fsi = load_social_fsi()
+    if social_fsi is not None:
+        fsi_dict['social_fsi'] = social_fsi
+
     ibov_df = load_ibovespa()
 
     if len(fsi_dict) == 0:
@@ -486,6 +506,7 @@ def main():
         print("    - python scripts/run_fsi.py (Dictionary FSI)")
         print("    - python scripts/ml_fsi.py (ML FSI)")
         print("    - python scripts/news_fsi.py (News FSI)")
+        print("    - python scripts/social_fsi.py (Social FSI)")
         return
 
     print(f"\n  Found {len(fsi_dict)} FSI series: {list(fsi_dict.keys())}")
