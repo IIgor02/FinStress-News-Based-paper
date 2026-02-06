@@ -66,3 +66,8 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+# Credentials (IMPORTANT - never commit!)
+**/social_config.json
+**/twitter_cookies.json
+**/credentials*.json
