@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-News Collection Script for Brazilian Financial News
-====================================================
-Scrapes news from G1 Economia, Valor Econômico, and Folha Mercado.
+Historical News Collection Script for Brazilian Financial News
+================================================================
+Scrapes historical news from G1 Economia, Valor Econômico, and Folha Mercado.
+Uses search/archive functionality to access articles from 2011 onwards.
 
 Based on methodologies from:
 - G1: https://github.com/leviobrabo/G1-news-scraping
@@ -10,19 +11,17 @@ Based on methodologies from:
 - Folha: https://github.com/ruanrf/webscraper-folha
 
 Usage:
-    # Scrape all sources
+    # Scrape all sources (default: 2011 to present)
     python scripts/collect_news.py
 
-    # Scrape specific source
-    python scripts/collect_news.py --source g1
-    python scripts/collect_news.py --source valor
+    # Specific date range
+    python scripts/collect_news.py --start-year 2015 --end-year 2024
+
+    # Specific source
     python scripts/collect_news.py --source folha
 
-    # Search with keywords
-    python scripts/collect_news.py --keywords "crise,inflação"
-
-    # Specify number of pages
-    python scripts/collect_news.py --pages 10
+    # Custom keywords
+    python scripts/collect_news.py --keywords "crise,recessão"
 
 Output:
     data/raw/news_g1.csv
@@ -32,13 +31,14 @@ Output:
 """
 
 import argparse
+import json
 import re
 import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Optional, Dict
-from urllib.parse import urljoin, quote
+from urllib.parse import urljoin, quote, urlencode
 
 import pandas as pd
 
@@ -70,554 +70,461 @@ HEADERS = {
     'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
 }
 
-# URL configurations for each source
-SOURCES = {
-    'g1': {
-        'name': 'G1 Economia',
-        'base_url': 'https://g1.globo.com',
-        'economia_url': 'https://g1.globo.com/economia/',
-        'search_url': 'https://g1.globo.com/busca/?q={query}&page={page}&order=recent&species=notícias',
-    },
-    'valor': {
-        'name': 'Valor Econômico',
-        'base_url': 'https://valor.globo.com',
-        'economia_url': 'https://valor.globo.com/',
-        'search_url': 'https://valor.globo.com/busca/?q={query}&page={page}&order=recent',
-    },
-    'folha': {
-        'name': 'Folha de S. Paulo',
-        'base_url': 'https://www.folha.uol.com.br',
-        'economia_url': 'https://www.folha.uol.com.br/mercado/',
-        'search_url': 'https://search.folha.uol.com.br/search?q={query}&site=todos&periodo=todos&sr={offset}',
-    },
-}
+# Default search keywords for financial/economic news
+DEFAULT_KEYWORDS = [
+    'economia brasileira',
+    'crise financeira',
+    'bolsa de valores',
+    'ibovespa',
+    'mercado financeiro',
+    'banco central',
+    'inflação brasil',
+    'taxa selic',
+    'dólar real',
+    'recessão',
+]
+
+# Maximum articles per source per year (to avoid excessive scraping)
+MAX_ARTICLES_PER_YEAR = 500
 
 
 # =============================================================================
-# SCRAPER BASE CLASS
+# HTTP HELPERS
 # =============================================================================
 
-class NewsScraper:
-    """Base class for news scrapers."""
-
-    def __init__(self, source: str):
-        self.source = source
-        self.config = SOURCES[source]
-        self.session = None
-
-    def _get_session(self):
-        """Get or create requests session."""
-        if self.session is None:
-            try:
-                import requests
-                self.session = requests.Session()
-                self.session.headers.update(HEADERS)
-            except ImportError:
-                print("ERROR: requests not installed. Install with: pip install requests")
-                return None
-        return self.session
-
-    def _get_soup(self, url: str):
-        """Fetch URL and return BeautifulSoup object."""
-        try:
-            from bs4 import BeautifulSoup
-        except ImportError:
-            print("ERROR: BeautifulSoup not installed. Install with: pip install beautifulsoup4")
-            return None
-
-        session = self._get_session()
-        if not session:
-            return None
-
-        for attempt in range(MAX_RETRIES):
-            try:
-                response = session.get(url, timeout=30)
-                response.raise_for_status()
-                return BeautifulSoup(response.text, 'html.parser')
-            except Exception as e:
-                if attempt < MAX_RETRIES - 1:
-                    time.sleep(REQUEST_DELAY * (attempt + 1))
-                else:
-                    print(f"  Error fetching {url}: {e}")
-                    return None
+def get_session():
+    """Get requests session with headers."""
+    try:
+        import requests
+        session = requests.Session()
+        session.headers.update(HEADERS)
+        return session
+    except ImportError:
+        print("ERROR: requests not installed. Install with: pip install requests")
         return None
 
-    def scrape_latest(self, pages: int = 5) -> List[Dict]:
-        """Scrape latest news articles. Override in subclasses."""
-        raise NotImplementedError
 
-    def search(self, query: str, pages: int = 5) -> List[Dict]:
-        """Search for news with keyword. Override in subclasses."""
-        raise NotImplementedError
+def fetch_url(session, url: str, timeout: int = 30) -> Optional[str]:
+    """Fetch URL with retries."""
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = session.get(url, timeout=timeout)
+            response.raise_for_status()
+            return response.text
+        except Exception as e:
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(REQUEST_DELAY * (attempt + 1))
+            else:
+                return None
+    return None
+
+
+def get_soup(html: str):
+    """Parse HTML with BeautifulSoup."""
+    try:
+        from bs4 import BeautifulSoup
+        return BeautifulSoup(html, 'html.parser')
+    except ImportError:
+        print("ERROR: BeautifulSoup not installed. Install with: pip install beautifulsoup4")
+        return None
 
 
 # =============================================================================
-# G1 SCRAPER
+# FOLHA DE SÃO PAULO - ARCHIVE SEARCH
 # =============================================================================
 
-class G1Scraper(NewsScraper):
-    """Scraper for G1 Economia news."""
+def scrape_folha_archive(session, start_year: int, end_year: int,
+                         keywords: List[str] = None) -> List[Dict]:
+    """
+    Scrape Folha de São Paulo using their search archive.
 
-    def __init__(self):
-        super().__init__('g1')
+    Folha search URL format:
+    https://search.folha.uol.com.br/search?q=QUERY&site=todos&periodo=personalizado&sd=DD/MM/YYYY&ed=DD/MM/YYYY&sr=OFFSET
 
-    def scrape_latest(self, pages: int = 5) -> List[Dict]:
-        """Scrape latest G1 Economia articles."""
-        articles = []
+    Each page has 25 results.
+    """
+    articles = []
+    keywords = keywords or DEFAULT_KEYWORDS
 
-        # Scrape main economia page
-        soup = self._get_soup(self.config['economia_url'])
-        if soup:
-            articles.extend(self._parse_g1_page(soup))
+    print(f"\n  Scraping Folha de S. Paulo archive ({start_year}-{end_year})...")
 
-        print(f"    Found {len(articles)} articles from G1")
-        return articles
+    for year in range(start_year, end_year + 1):
+        year_articles = []
+        print(f"    Year {year}...", end=" ", flush=True)
 
-    def search(self, query: str, pages: int = 5) -> List[Dict]:
-        """Search G1 for articles matching query."""
-        articles = []
+        for keyword in keywords[:5]:  # Limit keywords per year
+            start_date = f"01/01/{year}"
+            end_date = f"31/12/{year}"
 
-        for page in range(1, pages + 1):
-            url = self.config['search_url'].format(query=quote(query), page=page)
-            print(f"    Searching G1 page {page}...")
+            # Iterate through pages
+            for page in range(1, 21):  # Max 20 pages per keyword per year
+                offset = (page - 1) * 25 + 1
 
-            soup = self._get_soup(url)
-            if soup:
-                page_articles = self._parse_g1_search(soup)
-                if not page_articles:
+                url = (
+                    f"https://search.folha.uol.com.br/search?"
+                    f"q={quote(keyword)}&site=online&periodo=personalizado"
+                    f"&sd={start_date}&ed={end_date}&sr={offset}"
+                )
+
+                html = fetch_url(session, url)
+                if not html:
                     break
-                articles.extend(page_articles)
 
-            time.sleep(REQUEST_DELAY)
+                soup = get_soup(html)
+                if not soup:
+                    break
 
-        print(f"    Found {len(articles)} articles from G1 search")
-        return articles
+                # Find search results
+                results = soup.select('ol.c-search li.c-search__result')
+                if not results:
+                    # Try alternative selector
+                    results = soup.select('div.search-result, li.search-result-item')
 
-    def _parse_g1_page(self, soup) -> List[Dict]:
-        """Parse G1 news page for articles."""
-        articles = []
+                if not results:
+                    break
 
-        # G1 uses various article containers
-        selectors = [
-            'div.bastian-feed-item',
-            'div.feed-post-body',
-            'article',
-            'div.post-item',
-        ]
+                for item in results:
+                    try:
+                        link = item.select_one('a.c-search__result__link, a')
+                        if not link:
+                            continue
 
-        for selector in selectors:
-            items = soup.select(selector)
-            for item in items:
-                try:
-                    # Try to find title link
-                    link = item.select_one('a.feed-post-link, a.post-link, a[href*="/noticia/"]')
-                    if not link:
+                        title_elem = item.select_one('h2.c-search__result__title, h3, span.title')
+                        title = title_elem.get_text(strip=True) if title_elem else link.get_text(strip=True)
+
+                        url_article = link.get('href', '')
+                        if not url_article or 'folha.uol.com.br' not in url_article:
+                            continue
+
+                        # Extract date from URL or metadata
+                        date_match = re.search(r'/(\d{4})/(\d{2})/(\d{2})/', url_article)
+                        if date_match:
+                            date_str = f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}"
+                        else:
+                            # Try to find date in text
+                            date_elem = item.select_one('time, span.c-search__result__date')
+                            if date_elem:
+                                date_text = date_elem.get_text(strip=True)
+                                # Parse DD/MM/YYYY or similar
+                                dm = re.search(r'(\d{1,2})/(\d{1,2})/(\d{4})', date_text)
+                                if dm:
+                                    date_str = f"{dm.group(3)}-{dm.group(2).zfill(2)}-{dm.group(1).zfill(2)}"
+                                else:
+                                    date_str = f"{year}-01-01"
+                            else:
+                                date_str = f"{year}-01-01"
+
+                        # Summary
+                        summary_elem = item.select_one('p.c-search__result__summary, p')
+                        summary = summary_elem.get_text(strip=True) if summary_elem else ''
+
+                        year_articles.append({
+                            'title': title[:500],
+                            'url': url_article,
+                            'date': date_str,
+                            'summary': summary[:500],
+                            'source': 'folha',
+                            'keyword': keyword,
+                        })
+                    except Exception:
                         continue
 
-                    title = link.get_text(strip=True)
-                    url = link.get('href', '')
-                    if not url.startswith('http'):
-                        url = urljoin(self.config['base_url'], url)
+                time.sleep(REQUEST_DELAY)
 
-                    # Try to find date
-                    date_elem = item.select_one('span.feed-post-datetime, time, span.timestamp')
-                    date_str = date_elem.get_text(strip=True) if date_elem else ''
+                # Stop if we got enough articles
+                if len(year_articles) >= MAX_ARTICLES_PER_YEAR:
+                    break
 
-                    # Try to find summary
-                    summary_elem = item.select_one('div.feed-post-body-resumo, p.summary')
-                    summary = summary_elem.get_text(strip=True) if summary_elem else ''
+            if len(year_articles) >= MAX_ARTICLES_PER_YEAR:
+                break
 
-                    if title and url:
-                        articles.append({
-                            'title': title,
-                            'url': url,
-                            'date': self._parse_date(date_str),
-                            'summary': summary,
-                            'source': 'g1',
+        # Remove duplicates within year
+        seen_urls = set()
+        unique = []
+        for a in year_articles:
+            if a['url'] not in seen_urls:
+                seen_urls.add(a['url'])
+                unique.append(a)
+
+        articles.extend(unique)
+        print(f"{len(unique)} articles")
+
+    print(f"    Total: {len(articles)} articles from Folha")
+    return articles
+
+
+# =============================================================================
+# VALOR ECONÔMICO - ARCHIVE SEARCH
+# =============================================================================
+
+def scrape_valor_archive(session, start_year: int, end_year: int,
+                         keywords: List[str] = None) -> List[Dict]:
+    """
+    Scrape Valor Econômico using their search.
+
+    Valor search URL format:
+    https://valor.globo.com/busca/?q=QUERY&page=PAGE&order=recent&from=YYYY-MM-DDTHH:MM:SS-0300&to=YYYY-MM-DDTHH:MM:SS-0300
+    """
+    articles = []
+    keywords = keywords or DEFAULT_KEYWORDS
+
+    print(f"\n  Scraping Valor Econômico archive ({start_year}-{end_year})...")
+
+    for year in range(start_year, end_year + 1):
+        year_articles = []
+        print(f"    Year {year}...", end=" ", flush=True)
+
+        for keyword in keywords[:5]:
+            from_date = f"{year}-01-01T00:00:00-0300"
+            to_date = f"{year}-12-31T23:59:59-0300"
+
+            for page in range(1, 21):
+                url = (
+                    f"https://valor.globo.com/busca/?"
+                    f"q={quote(keyword)}&page={page}&order=recent"
+                    f"&from={quote(from_date)}&to={quote(to_date)}"
+                )
+
+                html = fetch_url(session, url)
+                if not html:
+                    break
+
+                soup = get_soup(html)
+                if not soup:
+                    break
+
+                # Find search results - Globo sites use widget--info
+                results = soup.select('li.widget--info')
+                if not results:
+                    results = soup.select('div.search-result, article')
+
+                if not results:
+                    break
+
+                for item in results:
+                    try:
+                        link = item.select_one('a')
+                        if not link:
+                            continue
+
+                        href = link.get('href', '')
+                        if not href:
+                            continue
+
+                        # Only keep valor.globo.com URLs
+                        if 'valor.globo.com' not in href and not href.startswith('/'):
+                            continue
+
+                        if href.startswith('/'):
+                            href = f"https://valor.globo.com{href}"
+
+                        # Filter for article URLs (contain date pattern)
+                        if not re.search(r'/\d{4}/\d{2}/\d{2}/', href):
+                            continue
+
+                        title_elem = item.select_one('div.widget--info__title, h2, h3')
+                        title = title_elem.get_text(strip=True) if title_elem else link.get_text(strip=True)
+
+                        if len(title) < 15:
+                            continue
+
+                        # Extract date from URL
+                        date_match = re.search(r'/(\d{4})/(\d{2})/(\d{2})/', href)
+                        date_str = f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}" if date_match else f"{year}-01-01"
+
+                        year_articles.append({
+                            'title': title[:500],
+                            'url': href,
+                            'date': date_str,
+                            'summary': '',
+                            'source': 'valor',
+                            'keyword': keyword,
                         })
-                except Exception:
-                    continue
+                    except Exception:
+                        continue
 
-        return articles
+                time.sleep(REQUEST_DELAY)
 
-    def _parse_g1_search(self, soup) -> List[Dict]:
-        """Parse G1 search results."""
-        articles = []
+                if len(year_articles) >= MAX_ARTICLES_PER_YEAR:
+                    break
 
-        items = soup.select('li.widget--info')
-        for item in items:
-            try:
-                link = item.select_one('a')
-                if not link:
-                    continue
-
-                title_elem = item.select_one('div.widget--info__title')
-                title = title_elem.get_text(strip=True) if title_elem else link.get_text(strip=True)
-                url = link.get('href', '')
-
-                date_elem = item.select_one('div.widget--info__meta')
-                date_str = date_elem.get_text(strip=True) if date_elem else ''
-
-                if title and url:
-                    articles.append({
-                        'title': title,
-                        'url': url,
-                        'date': self._parse_date(date_str),
-                        'summary': '',
-                        'source': 'g1',
-                    })
-            except Exception:
-                continue
-
-        return articles
-
-    def _parse_date(self, date_str: str) -> str:
-        """Parse date string to ISO format."""
-        if not date_str:
-            return datetime.now().strftime('%Y-%m-%d')
-
-        # Try various Portuguese date formats
-        date_str = date_str.lower().strip()
-
-        if 'hoje' in date_str or 'há' in date_str:
-            return datetime.now().strftime('%Y-%m-%d')
-        if 'ontem' in date_str:
-            return (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-
-        # Try DD/MM/YYYY or DD/MM
-        match = re.search(r'(\d{1,2})/(\d{1,2})(?:/(\d{4}))?', date_str)
-        if match:
-            day, month = int(match.group(1)), int(match.group(2))
-            year = int(match.group(3)) if match.group(3) else datetime.now().year
-            try:
-                return datetime(year, month, day).strftime('%Y-%m-%d')
-            except ValueError:
-                pass
-
-        return datetime.now().strftime('%Y-%m-%d')
-
-
-# =============================================================================
-# VALOR SCRAPER
-# =============================================================================
-
-class ValorScraper(NewsScraper):
-    """Scraper for Valor Econômico news."""
-
-    def __init__(self):
-        super().__init__('valor')
-
-    def scrape_latest(self, pages: int = 5) -> List[Dict]:
-        """Scrape latest Valor Econômico articles."""
-        articles = []
-
-        # Scrape main page
-        soup = self._get_soup(self.config['economia_url'])
-        if soup:
-            articles.extend(self._parse_valor_page(soup))
-
-        # Also try different sections
-        sections = ['financas', 'brasil', 'mundo', 'empresas']
-        for section in sections:
-            url = f"{self.config['base_url']}/{section}/"
-            soup = self._get_soup(url)
-            if soup:
-                articles.extend(self._parse_valor_page(soup))
-            time.sleep(REQUEST_DELAY)
+            if len(year_articles) >= MAX_ARTICLES_PER_YEAR:
+                break
 
         # Remove duplicates
         seen_urls = set()
-        unique_articles = []
-        for article in articles:
-            if article['url'] not in seen_urls:
-                seen_urls.add(article['url'])
-                unique_articles.append(article)
+        unique = []
+        for a in year_articles:
+            if a['url'] not in seen_urls:
+                seen_urls.add(a['url'])
+                unique.append(a)
 
-        print(f"    Found {len(unique_articles)} articles from Valor")
-        return unique_articles
+        articles.extend(unique)
+        print(f"{len(unique)} articles")
 
-    def search(self, query: str, pages: int = 5) -> List[Dict]:
-        """Search Valor for articles matching query."""
-        articles = []
-
-        for page in range(1, pages + 1):
-            url = self.config['search_url'].format(query=quote(query), page=page)
-            print(f"    Searching Valor page {page}...")
-
-            soup = self._get_soup(url)
-            if soup:
-                page_articles = self._parse_valor_search(soup)
-                if not page_articles:
-                    break
-                articles.extend(page_articles)
-
-            time.sleep(REQUEST_DELAY)
-
-        print(f"    Found {len(articles)} articles from Valor search")
-        return articles
-
-    def _parse_valor_page(self, soup) -> List[Dict]:
-        """Parse Valor page for articles."""
-        articles = []
-
-        # Find all article links
-        links = soup.find_all('a', href=True)
-        for link in links:
-            try:
-                href = link.get('href', '')
-
-                # Filter for article URLs (contain date pattern)
-                if not re.search(r'/\d{4}/\d{2}/\d{2}/', href):
-                    continue
-                if 'valor.globo.com' not in href and not href.startswith('/'):
-                    continue
-
-                title = link.get_text(strip=True)
-                if not title or len(title) < 20:  # Skip short text
-                    continue
-
-                url = href if href.startswith('http') else urljoin(self.config['base_url'], href)
-
-                # Extract date from URL
-                date_match = re.search(r'/(\d{4})/(\d{2})/(\d{2})/', url)
-                date_str = f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}" if date_match else datetime.now().strftime('%Y-%m-%d')
-
-                articles.append({
-                    'title': title,
-                    'url': url,
-                    'date': date_str,
-                    'summary': '',
-                    'source': 'valor',
-                })
-            except Exception:
-                continue
-
-        return articles
-
-    def _parse_valor_search(self, soup) -> List[Dict]:
-        """Parse Valor search results."""
-        return self._parse_valor_page(soup)
+    print(f"    Total: {len(articles)} articles from Valor")
+    return articles
 
 
 # =============================================================================
-# FOLHA SCRAPER
+# G1 - ARCHIVE SEARCH
 # =============================================================================
 
-class FolhaScraper(NewsScraper):
-    """Scraper for Folha de S. Paulo (Mercado section)."""
+def scrape_g1_archive(session, start_year: int, end_year: int,
+                      keywords: List[str] = None) -> List[Dict]:
+    """
+    Scrape G1 Economia using their search.
 
-    def __init__(self):
-        super().__init__('folha')
+    G1 search URL format:
+    https://g1.globo.com/busca/?q=QUERY&page=PAGE&order=recent&species=notícias&from=YYYY-MM-DDTHH:MM:SS-0300&to=YYYY-MM-DDTHH:MM:SS-0300
+    """
+    articles = []
+    keywords = keywords or DEFAULT_KEYWORDS
 
-    def scrape_latest(self, pages: int = 5) -> List[Dict]:
-        """Scrape latest Folha Mercado articles."""
-        articles = []
+    print(f"\n  Scraping G1 Economia archive ({start_year}-{end_year})...")
 
-        # Scrape mercado section
-        soup = self._get_soup(self.config['economia_url'])
-        if soup:
-            articles.extend(self._parse_folha_page(soup))
+    for year in range(start_year, end_year + 1):
+        year_articles = []
+        print(f"    Year {year}...", end=" ", flush=True)
 
-        print(f"    Found {len(articles)} articles from Folha")
-        return articles
+        for keyword in keywords[:5]:
+            from_date = f"{year}-01-01T00:00:00-0300"
+            to_date = f"{year}-12-31T23:59:59-0300"
 
-    def search(self, query: str, pages: int = 5) -> List[Dict]:
-        """Search Folha for articles matching query."""
-        articles = []
+            for page in range(1, 21):
+                url = (
+                    f"https://g1.globo.com/busca/?"
+                    f"q={quote(keyword)}&page={page}&order=recent&species=not%C3%ADcias"
+                    f"&from={quote(from_date)}&to={quote(to_date)}"
+                )
 
-        for page in range(1, pages + 1):
-            offset = (page - 1) * 25 + 1
-            url = self.config['search_url'].format(query=quote(query), offset=offset)
-            print(f"    Searching Folha page {page}...")
-
-            soup = self._get_soup(url)
-            if soup:
-                page_articles = self._parse_folha_search(soup)
-                if not page_articles:
+                html = fetch_url(session, url)
+                if not html:
                     break
-                articles.extend(page_articles)
 
-            time.sleep(REQUEST_DELAY)
+                soup = get_soup(html)
+                if not soup:
+                    break
 
-        print(f"    Found {len(articles)} articles from Folha search")
-        return articles
+                results = soup.select('li.widget--info')
+                if not results:
+                    results = soup.select('div.search-result, article')
 
-    def _parse_folha_page(self, soup) -> List[Dict]:
-        """Parse Folha page for articles."""
-        articles = []
+                if not results:
+                    break
 
-        # Find article containers
-        selectors = [
-            'div.c-headline',
-            'article',
-            'div.c-main-headline',
-        ]
-
-        for selector in selectors:
-            items = soup.select(selector)
-            for item in items:
-                try:
-                    link = item.select_one('a[href*="folha.uol.com.br"]')
-                    if not link:
+                for item in results:
+                    try:
                         link = item.select_one('a')
-                    if not link:
-                        continue
+                        if not link:
+                            continue
 
-                    title_elem = item.select_one('h2, h3, span.c-headline__title')
-                    title = title_elem.get_text(strip=True) if title_elem else link.get_text(strip=True)
-                    url = link.get('href', '')
+                        href = link.get('href', '')
+                        if not href:
+                            continue
 
-                    if not url.startswith('http'):
-                        url = urljoin(self.config['base_url'], url)
+                        # Filter for G1 economy URLs
+                        if 'g1.globo.com' not in href and 'economia' not in href.lower():
+                            continue
 
-                    # Try to find date
-                    time_elem = item.select_one('time')
-                    date_str = time_elem.get('datetime', '') if time_elem else ''
-                    if not date_str:
-                        date_str = datetime.now().strftime('%Y-%m-%d')
-                    else:
-                        date_str = date_str[:10]  # Get just the date part
+                        title_elem = item.select_one('div.widget--info__title, h2, h3')
+                        title = title_elem.get_text(strip=True) if title_elem else link.get_text(strip=True)
 
-                    if title and url and 'folha.uol.com.br' in url:
-                        articles.append({
-                            'title': title,
-                            'url': url,
+                        if len(title) < 15:
+                            continue
+
+                        # Extract date
+                        date_match = re.search(r'/(\d{4})/(\d{2})/(\d{2})/', href)
+                        if date_match:
+                            date_str = f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}"
+                        else:
+                            # Try meta date
+                            meta_elem = item.select_one('div.widget--info__meta, span.timestamp')
+                            if meta_elem:
+                                meta_text = meta_elem.get_text(strip=True)
+                                dm = re.search(r'(\d{1,2})/(\d{1,2})/(\d{4})', meta_text)
+                                if dm:
+                                    date_str = f"{dm.group(3)}-{dm.group(2).zfill(2)}-{dm.group(1).zfill(2)}"
+                                else:
+                                    date_str = f"{year}-01-01"
+                            else:
+                                date_str = f"{year}-01-01"
+
+                        year_articles.append({
+                            'title': title[:500],
+                            'url': href,
                             'date': date_str,
                             'summary': '',
-                            'source': 'folha',
+                            'source': 'g1',
+                            'keyword': keyword,
                         })
-                except Exception:
-                    continue
+                    except Exception:
+                        continue
 
-        return articles
-
-    def _parse_folha_search(self, soup) -> List[Dict]:
-        """Parse Folha search results."""
-        articles = []
-
-        items = soup.select('ol.c-search li.c-search__result')
-        if not items:
-            items = soup.select('div.search-result')
-
-        for item in items:
-            try:
-                link = item.select_one('a')
-                if not link:
-                    continue
-
-                title = link.get_text(strip=True)
-                url = link.get('href', '')
-
-                if title and url:
-                    articles.append({
-                        'title': title,
-                        'url': url,
-                        'date': datetime.now().strftime('%Y-%m-%d'),
-                        'summary': '',
-                        'source': 'folha',
-                    })
-            except Exception:
-                continue
-
-        return articles
-
-
-# =============================================================================
-# MAIN COLLECTION FUNCTIONS
-# =============================================================================
-
-def collect_all_news(pages: int = 5, keywords: Optional[List[str]] = None) -> pd.DataFrame:
-    """
-    Collect news from all sources.
-
-    Args:
-        pages: Number of pages to scrape per source
-        keywords: Optional list of keywords to search for
-
-    Returns:
-        DataFrame with all collected articles
-    """
-    all_articles = []
-
-    scrapers = {
-        'g1': G1Scraper(),
-        'valor': ValorScraper(),
-        'folha': FolhaScraper(),
-    }
-
-    for source_name, scraper in scrapers.items():
-        print(f"\n  Scraping {scraper.config['name']}...")
-
-        if keywords:
-            for keyword in keywords:
-                articles = scraper.search(keyword, pages)
-                all_articles.extend(articles)
                 time.sleep(REQUEST_DELAY)
-        else:
-            articles = scraper.scrape_latest(pages)
-            all_articles.extend(articles)
 
-        time.sleep(REQUEST_DELAY * 2)
+                if len(year_articles) >= MAX_ARTICLES_PER_YEAR:
+                    break
+
+            if len(year_articles) >= MAX_ARTICLES_PER_YEAR:
+                break
+
+        # Remove duplicates
+        seen_urls = set()
+        unique = []
+        for a in year_articles:
+            if a['url'] not in seen_urls:
+                seen_urls.add(a['url'])
+                unique.append(a)
+
+        articles.extend(unique)
+        print(f"{len(unique)} articles")
+
+    print(f"    Total: {len(articles)} articles from G1")
+    return articles
+
+
+# =============================================================================
+# MAIN COLLECTION
+# =============================================================================
+
+def collect_all_news(start_year: int, end_year: int,
+                     keywords: List[str] = None,
+                     sources: List[str] = None) -> pd.DataFrame:
+    """
+    Collect news from all sources for the given year range.
+    """
+    session = get_session()
+    if not session:
+        return pd.DataFrame()
+
+    all_articles = []
+    sources = sources or ['folha', 'valor', 'g1']
+
+    if 'folha' in sources:
+        articles = scrape_folha_archive(session, start_year, end_year, keywords)
+        all_articles.extend(articles)
+
+    if 'valor' in sources:
+        articles = scrape_valor_archive(session, start_year, end_year, keywords)
+        all_articles.extend(articles)
+
+    if 'g1' in sources:
+        articles = scrape_g1_archive(session, start_year, end_year, keywords)
+        all_articles.extend(articles)
 
     if not all_articles:
-        print("\n  WARNING: No articles collected")
         return pd.DataFrame()
 
-    # Create DataFrame
     df = pd.DataFrame(all_articles)
 
-    # Remove duplicates
+    # Remove duplicates by URL
     df = df.drop_duplicates(subset=['url'])
 
-    # Sort by date
+    # Parse and sort by date
     df['date'] = pd.to_datetime(df['date'], errors='coerce')
-    df = df.sort_values('date', ascending=False)
-
-    return df
-
-
-def collect_from_source(source: str, pages: int = 5, keywords: Optional[List[str]] = None) -> pd.DataFrame:
-    """
-    Collect news from a specific source.
-
-    Args:
-        source: Source name ('g1', 'valor', or 'folha')
-        pages: Number of pages to scrape
-        keywords: Optional list of keywords to search for
-
-    Returns:
-        DataFrame with collected articles
-    """
-    scrapers = {
-        'g1': G1Scraper,
-        'valor': ValorScraper,
-        'folha': FolhaScraper,
-    }
-
-    if source not in scrapers:
-        print(f"ERROR: Unknown source '{source}'. Use: g1, valor, or folha")
-        return pd.DataFrame()
-
-    scraper = scrapers[source]()
-    articles = []
-
-    print(f"\n  Scraping {scraper.config['name']}...")
-
-    if keywords:
-        for keyword in keywords:
-            articles.extend(scraper.search(keyword, pages))
-            time.sleep(REQUEST_DELAY)
-    else:
-        articles.extend(scraper.scrape_latest(pages))
-
-    if not articles:
-        print("\n  WARNING: No articles collected")
-        return pd.DataFrame()
-
-    df = pd.DataFrame(articles)
-    df = df.drop_duplicates(subset=['url'])
-    df['date'] = pd.to_datetime(df['date'], errors='coerce')
-    df = df.sort_values('date', ascending=False)
+    df = df.dropna(subset=['date'])
+    df = df.sort_values('date', ascending=True)
 
     return df
 
@@ -628,73 +535,76 @@ def collect_from_source(source: str, pages: int = 5, keywords: Optional[List[str
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Collect news from Brazilian financial news sources',
+        description='Collect historical news from Brazilian financial news sources',
     )
+    parser.add_argument('--start-year', type=int, default=2011,
+                        help='Start year (default: 2011)')
+    parser.add_argument('--end-year', type=int, default=2025,
+                        help='End year (default: 2025)')
     parser.add_argument('--source', type=str, choices=['g1', 'valor', 'folha', 'all'],
                         default='all', help='News source to scrape (default: all)')
     parser.add_argument('--keywords', type=str, default=None,
                         help='Comma-separated keywords to search for')
-    parser.add_argument('--pages', type=int, default=5,
-                        help='Number of pages to scrape (default: 5)')
 
     args = parser.parse_args()
 
     keywords = None
     if args.keywords:
         keywords = [k.strip() for k in args.keywords.split(',')]
+    else:
+        keywords = DEFAULT_KEYWORDS
+
+    sources = ['folha', 'valor', 'g1'] if args.source == 'all' else [args.source]
 
     print("=" * 60)
-    print("NEWS COLLECTION")
+    print("HISTORICAL NEWS COLLECTION")
     print("=" * 60)
-    print(f"\nSource: {args.source}")
-    print(f"Pages: {args.pages}")
-    if keywords:
-        print(f"Keywords: {keywords}")
+    print(f"\nPeriod: {args.start_year} to {args.end_year}")
+    print(f"Sources: {', '.join(sources)}")
+    print(f"Keywords: {keywords[:5]}...")  # Show first 5
     print(f"Output: {DATA_DIR}")
 
     print("\n" + "-" * 40)
     print("Collecting articles...")
     print("-" * 40)
 
-    if args.source == 'all':
-        df = collect_all_news(args.pages, keywords)
+    df = collect_all_news(args.start_year, args.end_year, keywords, sources)
 
-        if not df.empty:
-            # Save combined file
-            combined_path = DATA_DIR / 'news_combined.csv'
-            df.to_csv(combined_path, index=False)
+    if df.empty:
+        print("\n  WARNING: No articles collected")
+        print("  Check your internet connection or try different keywords")
+        return
 
-            # Save per-source files
-            for source in df['source'].unique():
-                source_df = df[df['source'] == source]
-                source_path = DATA_DIR / f'news_{source}.csv'
-                source_df.to_csv(source_path, index=False)
-                print(f"  Saved {len(source_df)} articles to {source_path}")
+    # Save combined file
+    combined_path = DATA_DIR / 'news_combined.csv'
+    df.to_csv(combined_path, index=False)
+    print(f"\n  Saved {len(df)} total articles to {combined_path}")
 
-            print(f"\n  Saved {len(df)} total articles to {combined_path}")
-    else:
-        df = collect_from_source(args.source, args.pages, keywords)
-
-        if not df.empty:
-            output_path = DATA_DIR / f'news_{args.source}.csv'
-            df.to_csv(output_path, index=False)
-            print(f"\n  Saved {len(df)} articles to {output_path}")
+    # Save per-source files
+    for source in df['source'].unique():
+        source_df = df[df['source'] == source]
+        source_path = DATA_DIR / f'news_{source}.csv'
+        source_df.to_csv(source_path, index=False)
+        print(f"  Saved {len(source_df)} articles to {source_path}")
 
     # Summary
     print("\n" + "=" * 60)
-    if df.empty:
-        print("NEWS COLLECTION FAILED")
-        print("=" * 60)
-        print("\nNo articles collected. Check your internet connection.")
-    else:
-        print("NEWS COLLECTION COMPLETE")
-        print("=" * 60)
-        print(f"\nTotal articles: {len(df)}")
-        print(f"Date range: {df['date'].min().date() if pd.notna(df['date'].min()) else 'N/A'} to {df['date'].max().date() if pd.notna(df['date'].max()) else 'N/A'}")
-        print(f"\nArticles by source:")
-        for source, count in df['source'].value_counts().items():
-            print(f"  - {source}: {count}")
-        print(f"\nNext step: python scripts/news_fsi.py")
+    print("NEWS COLLECTION COMPLETE")
+    print("=" * 60)
+    print(f"\nTotal articles: {len(df)}")
+    print(f"Date range: {df['date'].min().date()} to {df['date'].max().date()}")
+
+    print(f"\nArticles by source:")
+    for source, count in df['source'].value_counts().items():
+        print(f"  - {source}: {count}")
+
+    print(f"\nArticles by year:")
+    df['year'] = df['date'].dt.year
+    for year in sorted(df['year'].unique()):
+        count = (df['year'] == year).sum()
+        print(f"  - {year}: {count}")
+
+    print(f"\nNext step: python scripts/news_fsi.py")
     print("=" * 60)
 
 
