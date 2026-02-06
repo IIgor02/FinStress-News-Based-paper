@@ -27,4 +27,3 @@ webdriver-manager>=4.0.0
 
 # Social media scraping
 twikit>=1.0.0           # Twitter/X scraper (no API key needed)
-praw>=7.7.0             # Reddit API wrapper

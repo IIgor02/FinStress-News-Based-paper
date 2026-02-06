@@ -63,6 +63,11 @@ Thumbs.db
 .env
 .env.local
 
+# Credentials (IMPORTANT - never commit!)
+**/social_config.json
+**/twitter_cookies.json
+**/credentials*.json
+
 # Temporary files
 *.tmp
 *.temp
