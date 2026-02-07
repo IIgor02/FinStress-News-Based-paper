@@ -410,7 +410,7 @@ def plot_combined_fsi(combined_df: pd.DataFrame, ibov_df: pd.DataFrame = None,
         'ml_fsi': COLORS['ml_fsi'],
         'news_fsi': COLORS['news_fsi']
     }
-    labels = {'dict_fsi': 'Dictionary (Da et al.)', 'ml_fsi': 'ML (García et al.)', 'news_fsi': 'News (Baker et al.)'}
+    labels = {'dict_fsi': 'Dictionary FSI', 'ml_fsi': 'ML FSI', 'news_fsi': 'News FSI'}
 
     # Plot 1: Individual FSI series (0-1 scale)
     ax1 = axes[0]

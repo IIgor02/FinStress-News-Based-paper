@@ -253,16 +253,60 @@ class MarkovSwitchingFSI:
         # Typically: [const_0, const_1, sigma_0, sigma_1, p[0->0], p[1->1]]
 
         try:
-            # Extract regime means
-            mu_0 = params[0]  # Regime 0 constant (calm)
-            mu_1 = params[1]  # Regime 1 constant (crisis)
+            # Extract regime means using regime-specific approach
+            # The model stores parameters in a specific order depending on specification
+            # Try to get regime-specific means from the model summary
 
-            # Extract regime standard deviations
-            if self.switching_variance:
-                sigma_0 = np.exp(params[2])  # Regime 0 sigma
-                sigma_1 = np.exp(params[3])  # Regime 1 sigma
-            else:
-                sigma_0 = sigma_1 = np.exp(params[2])
+            # Method 1: Try accessing regime-specific constants directly
+            if hasattr(self.results, 'expected_durations'):
+                # Some versions have this attribute
+                pass
+
+            # Get the number of parameters
+            n_params = len(params)
+
+            # For 2-regime model with switching variance:
+            # Typically: [const[0], const[1], sigma[0], sigma[1], ...]
+            # But parameter ordering varies by statsmodels version
+
+            # Try to extract means from the param names if available
+            param_names = self.results.param_names if hasattr(self.results, 'param_names') else []
+
+            mu_0, mu_1 = None, None
+            sigma_0, sigma_1 = None, None
+
+            # Search for const/intercept parameters
+            for i, name in enumerate(param_names):
+                name_lower = name.lower()
+                if 'const' in name_lower or 'intercept' in name_lower:
+                    if '[0]' in name or 'regime 0' in name_lower:
+                        mu_0 = params[i]
+                    elif '[1]' in name or 'regime 1' in name_lower:
+                        mu_1 = params[i]
+                if 'sigma' in name_lower or 'variance' in name_lower:
+                    if '[0]' in name or 'regime 0' in name_lower:
+                        sigma_0 = np.exp(params[i]) if params[i] < 10 else params[i]
+                    elif '[1]' in name or 'regime 1' in name_lower:
+                        sigma_1 = np.exp(params[i]) if params[i] < 10 else params[i]
+
+            # Fallback: Use positional extraction if named extraction failed
+            if mu_0 is None or mu_1 is None:
+                mu_0 = float(params[0])
+                mu_1 = float(params[1]) if n_params > 1 else float(params[0])
+
+            if sigma_0 is None or sigma_1 is None:
+                if self.switching_variance and n_params >= 4:
+                    sigma_0 = np.exp(float(params[2])) if float(params[2]) < 10 else float(params[2])
+                    sigma_1 = np.exp(float(params[3])) if float(params[3]) < 10 else float(params[3])
+                elif n_params >= 3:
+                    sigma_0 = sigma_1 = np.exp(float(params[2])) if float(params[2]) < 10 else float(params[2])
+                else:
+                    # Estimate from data
+                    sigma_0 = sigma_1 = float(self.model.endog.std())
+
+            # Convert to Python floats
+            mu_0, mu_1 = float(mu_0), float(mu_1)
+            sigma_0, sigma_1 = float(sigma_0), float(sigma_1)
 
             # Identify which regime is "crisis" (higher mean = more stress)
             if mu_0 > mu_1:
@@ -278,9 +322,13 @@ class MarkovSwitchingFSI:
                 filtered_crisis = filtered[1] if filtered.shape[0] > 1 else filtered[0]
 
         except Exception as e:
-            warnings.warn(f"Parameter extraction error: {e}. Using defaults.")
-            mu_calm, mu_crisis = 0.3, 0.7
-            sigma_calm, sigma_crisis = 0.1, 0.2
+            warnings.warn(f"Parameter extraction error: {e}. Using empirical estimates.")
+            # Use empirical estimates based on data quantiles
+            data_values = self.model.endog.values if hasattr(self.model.endog, 'values') else self.model.endog
+            mu_calm = float(np.percentile(data_values, 25))  # Lower quartile for calm
+            mu_crisis = float(np.percentile(data_values, 75))  # Upper quartile for crisis
+            sigma_calm = float(np.std(data_values[data_values < np.median(data_values)]))
+            sigma_crisis = float(np.std(data_values[data_values >= np.median(data_values)]))
             smoothed_crisis = smoothed[0]
             filtered_crisis = filtered[0]
 
@@ -625,15 +673,19 @@ def generate_regime_report(fsi: pd.Series, results: RegimeResults,
     lines.append("2. REGIME PARAMETERS")
     lines.append("=" * 70)
 
+    # Convert numpy types to Python floats
+    dur_calm = float(results.duration_calm) if np.isfinite(results.duration_calm) else float('inf')
+    dur_crisis = float(results.duration_crisis) if np.isfinite(results.duration_crisis) else float('inf')
+
     lines.append("\n  CALM REGIME (S=0):")
-    lines.append(f"    Mean (μ₀):           {results.mu_calm:.4f}")
-    lines.append(f"    Std Dev (σ₀):        {results.sigma_calm:.4f}")
-    lines.append(f"    Expected Duration:   {results.duration_calm:.1f} weeks")
+    lines.append(f"    Mean (μ₀):           {float(results.mu_calm):.4f}")
+    lines.append(f"    Std Dev (σ₀):        {float(results.sigma_calm):.4f}")
+    lines.append(f"    Expected Duration:   {'∞' if np.isinf(dur_calm) else f'{dur_calm:.1f}'} weeks")
 
     lines.append("\n  CRISIS REGIME (S=1):")
-    lines.append(f"    Mean (μ₁):           {results.mu_crisis:.4f}")
-    lines.append(f"    Std Dev (σ₁):        {results.sigma_crisis:.4f}")
-    lines.append(f"    Expected Duration:   {results.duration_crisis:.1f} weeks")
+    lines.append(f"    Mean (μ₁):           {float(results.mu_crisis):.4f}")
+    lines.append(f"    Std Dev (σ₁):        {float(results.sigma_crisis):.4f}")
+    lines.append(f"    Expected Duration:   {'∞' if np.isinf(dur_crisis) else f'{dur_crisis:.1f}'} weeks")
 
     # Transition matrix
     lines.append("\n" + "=" * 70)
@@ -672,18 +724,22 @@ def generate_regime_report(fsi: pd.Series, results: RegimeResults,
     lines.append("\n" + "=" * 70)
     lines.append("6. INTERPRETATION")
     lines.append("=" * 70)
+    # Format durations with proper Python floats
+    dur_calm_str = '∞' if np.isinf(dur_calm) else f'{dur_calm:.0f}'
+    dur_crisis_str = '∞' if np.isinf(dur_crisis) else f'{dur_crisis:.0f}'
+
     lines.append(f"""
     The Markov Switching Model identifies two distinct regimes:
 
     1. CALM REGIME:
-       - Mean FSI: {results.mu_calm:.3f} (lower stress)
-       - Volatility: {results.sigma_calm:.3f}
-       - Tends to persist for ~{results.duration_calm:.0f} weeks on average
+       - Mean FSI: {float(results.mu_calm):.3f} (lower stress)
+       - Volatility: {float(results.sigma_calm):.3f}
+       - Tends to persist for ~{dur_calm_str} weeks on average
 
     2. CRISIS REGIME:
-       - Mean FSI: {results.mu_crisis:.3f} (higher stress)
-       - Volatility: {results.sigma_crisis:.3f}
-       - Tends to persist for ~{results.duration_crisis:.0f} weeks on average
+       - Mean FSI: {float(results.mu_crisis):.3f} (higher stress)
+       - Volatility: {float(results.sigma_crisis):.3f}
+       - Tends to persist for ~{dur_crisis_str} weeks on average
 
     The smoothed probabilities provide the optimal estimate of being in each
     regime at each point in time, conditioning on all available data.
@@ -790,9 +846,15 @@ def main():
     print("\n" + "-" * 40)
     print("Regime Parameters:")
     print("-" * 40)
-    print(f"  Calm Regime:   μ = {results.mu_calm:.3f}, σ = {results.sigma_calm:.3f}")
-    print(f"  Crisis Regime: μ = {results.mu_crisis:.3f}, σ = {results.sigma_crisis:.3f}")
-    print(f"  Expected durations: Calm = {results.duration_calm:.1f} weeks, Crisis = {results.duration_crisis:.1f} weeks")
+    print(f"  Calm Regime:   μ = {float(results.mu_calm):.3f}, σ = {float(results.sigma_calm):.3f}")
+    print(f"  Crisis Regime: μ = {float(results.mu_crisis):.3f}, σ = {float(results.sigma_crisis):.3f}")
+    # Convert to Python float to avoid numpy array formatting issues
+    dur_calm = float(results.duration_calm) if np.isfinite(results.duration_calm) else float('inf')
+    dur_crisis = float(results.duration_crisis) if np.isfinite(results.duration_crisis) else float('inf')
+    if np.isinf(dur_calm) or np.isinf(dur_crisis):
+        print(f"  Expected durations: Calm = {'∞' if np.isinf(dur_calm) else f'{dur_calm:.1f}'} weeks, Crisis = {'∞' if np.isinf(dur_crisis) else f'{dur_crisis:.1f}'} weeks")
+    else:
+        print(f"  Expected durations: Calm = {dur_calm:.1f} weeks, Crisis = {dur_crisis:.1f} weeks")
 
     # Identify crisis periods
     print("\nIdentifying crisis periods...")

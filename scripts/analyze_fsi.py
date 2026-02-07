@@ -76,9 +76,9 @@ COLORS = {
 }
 
 FSI_LABELS = {
-    'dict_fsi': 'Dictionary FSI (Da et al.)',
-    'ml_fsi': 'ML FSI (García et al.)',
-    'news_fsi': 'News FSI (Baker et al.)',
+    'dict_fsi': 'Dictionary FSI',
+    'ml_fsi': 'ML FSI',
+    'news_fsi': 'News FSI',
     'combined_fsi': 'Combined FSI',
 }
 
@@ -104,8 +104,21 @@ PLOTS_DIR.mkdir(parents=True, exist_ok=True)
 # DATA LOADING
 # =============================================================================
 
+def normalize_to_01(series: pd.Series) -> pd.Series:
+    """Normalize a series to 0-1 scale if not already."""
+    min_val = series.min()
+    max_val = series.max()
+    # If values are already in 0-1 range (with some tolerance), return as is
+    if min_val >= -0.1 and max_val <= 1.1:
+        return series.clip(0, 1)
+    # Otherwise normalize
+    if max_val > min_val:
+        return (series - min_val) / (max_val - min_val)
+    return series * 0 + 0.5  # All same value -> return 0.5
+
+
 def load_all_fsi() -> Dict[str, pd.DataFrame]:
-    """Load all available FSI series."""
+    """Load all available FSI series and ensure 0-1 normalization."""
     fsi_data = {}
 
     # Dictionary FSI
@@ -114,20 +127,32 @@ def load_all_fsi() -> Dict[str, pd.DataFrame]:
         df = pd.read_csv(dict_path)
         df['date'] = pd.to_datetime(df['date'])
         df = df.rename(columns={'fsi': 'dict_fsi'})
+        # Normalize to 0-1 scale
+        df['dict_fsi'] = normalize_to_01(df['dict_fsi'])
         fsi_data['dict_fsi'] = df[['date', 'dict_fsi']]
-        print(f"  Dictionary FSI: {len(df)} weeks")
+        print(f"  Dictionary FSI: {len(df)} weeks (normalized to 0-1)")
 
     # ML FSI
     for path in [OUTPUT_DIR / 'ml_fsi_weekly.csv', OUTPUT_DIR / 'results' / 'fsi_ml_weekly.csv']:
         if path.exists():
             df = pd.read_csv(path)
             df['date'] = pd.to_datetime(df['date'])
+            # Handle various column names
             if 'ml_fsi' in df.columns:
-                fsi_data['ml_fsi'] = df[['date', 'ml_fsi']]
+                col = 'ml_fsi'
+            elif 'fsi_ml' in df.columns:
+                df = df.rename(columns={'fsi_ml': 'ml_fsi'})
+                col = 'ml_fsi'
             elif 'fsi' in df.columns:
                 df = df.rename(columns={'fsi': 'ml_fsi'})
-                fsi_data['ml_fsi'] = df[['date', 'ml_fsi']]
-            print(f"  ML FSI: {len(df)} weeks")
+                col = 'ml_fsi'
+            else:
+                print(f"  Warning: ML FSI column not found in {path}")
+                continue
+            # Normalize to 0-1 scale
+            df['ml_fsi'] = normalize_to_01(df['ml_fsi'])
+            fsi_data['ml_fsi'] = df[['date', 'ml_fsi']]
+            print(f"  ML FSI: {len(df)} weeks (normalized to 0-1)")
             break
 
     # News FSI
@@ -135,8 +160,10 @@ def load_all_fsi() -> Dict[str, pd.DataFrame]:
     if news_path.exists():
         df = pd.read_csv(news_path)
         df['date'] = pd.to_datetime(df['date'])
+        # Normalize to 0-1 scale
+        df['news_fsi'] = normalize_to_01(df['news_fsi'])
         fsi_data['news_fsi'] = df[['date', 'news_fsi']]
-        print(f"  News FSI: {len(df)} weeks")
+        print(f"  News FSI: {len(df)} weeks (normalized to 0-1)")
 
     return fsi_data
 
@@ -712,14 +739,14 @@ def plot_smoothed_comparison(raw_df: pd.DataFrame, smoothed_df: pd.DataFrame,
         ax.plot(raw_df['date'], raw_df[col], color='#A0A0A0',
                linewidth=0.8, alpha=0.6, label='Raw')
 
-        # Smoothed
+        # Smoothed - using "with Kalman Filter" terminology
         ax.plot(smoothed_df['date'], smoothed_df[smoothed_col], color=COLORS['smoothed'],
-               linewidth=1.5, label='Kalman Smoothed')
+               linewidth=1.5, label='With Kalman Filter')
 
         ax.axhline(y=0.5, color='gray', linestyle='--', alpha=0.5)
         ax.set_ylabel('FSI (0-1 scale)')
         ax.set_ylim(0, 1)
-        ax.set_title(f'{FSI_LABELS.get(col, col)}: Raw vs Smoothed')
+        ax.set_title(f'{FSI_LABELS.get(col, col)} with Kalman Filter')
         ax.legend(loc='upper right')
 
         # Calculate variance reduction
@@ -737,6 +764,77 @@ def plot_smoothed_comparison(raw_df: pd.DataFrame, smoothed_df: pd.DataFrame,
     else:
         axes[-1].xaxis.set_major_locator(mdates.YearLocator(1))
     axes[-1].xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+
+    plt.tight_layout()
+    if output_path:
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        print(f"  Saved: {output_path}")
+    plt.close()
+
+
+def plot_single_fsi_kalman(raw_df: pd.DataFrame, smoothed_df: pd.DataFrame,
+                           fsi_col: str, output_path: Path = None):
+    """
+    Plot a single FSI with Kalman Filter smoothing.
+
+    Parameters
+    ----------
+    raw_df : DataFrame
+        Raw FSI data with 'date' column
+    smoothed_df : DataFrame
+        Smoothed FSI data with '_smoothed' suffix columns
+    fsi_col : str
+        Name of the FSI column to plot (e.g., 'news_fsi', 'combined_fsi')
+    output_path : Path
+        Path to save the plot
+    """
+    smoothed_col = f'{fsi_col}_smoothed'
+
+    if fsi_col not in raw_df.columns:
+        print(f"  Warning: Column {fsi_col} not found in raw data")
+        return
+    if smoothed_col not in smoothed_df.columns:
+        print(f"  Warning: Column {smoothed_col} not found in smoothed data")
+        return
+
+    fig, ax = plt.subplots(figsize=(14, 6))
+
+    # Raw FSI
+    ax.plot(raw_df['date'], raw_df[fsi_col], color='#A0A0A0',
+           linewidth=0.8, alpha=0.6, label='Raw')
+
+    # Smoothed FSI
+    ax.plot(smoothed_df['date'], smoothed_df[smoothed_col], color=COLORS['smoothed'],
+           linewidth=1.5, label='With Kalman Filter')
+
+    # Add crisis shading
+    for (start, end), name in CRISIS_EPISODES.items():
+        start_dt, end_dt = pd.to_datetime(start), pd.to_datetime(end)
+        if raw_df['date'].min() <= end_dt and raw_df['date'].max() >= start_dt:
+            ax.axvspan(start_dt, end_dt, alpha=0.08, color=COLORS['crisis'])
+
+    ax.axhline(y=0.5, color='gray', linestyle='--', alpha=0.5)
+    ax.set_xlabel('Date')
+    ax.set_ylabel('FSI (0-1 scale)')
+    ax.set_ylim(0, 1)
+    ax.set_title(f'{FSI_LABELS.get(fsi_col, fsi_col)} with Kalman Filter')
+    ax.legend(loc='upper left')
+
+    # Calculate and display variance reduction
+    raw_var = raw_df[fsi_col].var()
+    smooth_var = smoothed_df[smoothed_col].var()
+    reduction = (1 - smooth_var/raw_var) * 100 if raw_var > 0 else 0
+    ax.text(0.02, 0.98, f'Variance reduced: {reduction:.1f}%',
+           transform=ax.transAxes, va='top', fontsize=9,
+           bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+
+    # Time axis formatting
+    date_range = (raw_df['date'].max() - raw_df['date'].min()).days / 365
+    if date_range > 10:
+        ax.xaxis.set_major_locator(mdates.YearLocator(2))
+    else:
+        ax.xaxis.set_major_locator(mdates.YearLocator(1))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
 
     plt.tight_layout()
     if output_path:
@@ -833,9 +931,9 @@ FSI Scale (0-1):
   0.8 - 1.0: Very high stress (crisis conditions)
 
 Methodology Notes:
-  - Dictionary FSI (Da et al.): Uses pre-defined stress-related Google Trends queries
-  - ML FSI (Garcia et al.): Uses LASSO regression to identify predictive queries
-  - News FSI (Baker et al.): Uses financial news article analysis
+  - Dictionary FSI: Uses pre-defined stress-related Google Trends queries
+  - ML FSI: Uses LASSO regression to identify predictive queries
+  - News FSI: Uses financial news article analysis
 
 Correlation Interpretation:
   *** p < 0.001 (highly significant)
@@ -975,6 +1073,14 @@ def main():
         # Smoothed comparison plot
         if smoothed_df is not None:
             plot_smoothed_comparison(fsi_df, smoothed_df, PLOTS_DIR / 'fsi_kalman_smoothed.png')
+
+            # Individual Kalman Filter plots for each FSI type
+            for fsi_col in ['news_fsi', 'combined_fsi', 'dict_fsi', 'ml_fsi']:
+                if fsi_col in fsi_df.columns and f'{fsi_col}_smoothed' in smoothed_df.columns:
+                    plot_single_fsi_kalman(
+                        fsi_df, smoothed_df, fsi_col,
+                        PLOTS_DIR / f'{fsi_col}_kalman.png'
+                    )
 
     print("\n" + "=" * 70)
     print("ANALYSIS COMPLETE")

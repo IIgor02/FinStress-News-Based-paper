@@ -449,7 +449,7 @@ def plot_fsi_timeseries(fsi: pd.Series, save_path: str = None):
     ax.set_xlabel('Date')
     ax.set_ylabel('FSI (0-1 scale)')
     ax.set_ylim(0, 1)
-    ax.set_title('ML-Generated Financial Stress Index (García et al. 2023)')
+    ax.set_title('ML-Generated Financial Stress Index')
     ax.legend(loc='upper left')
 
     # Improved time axis - show years appropriately

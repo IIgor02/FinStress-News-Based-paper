@@ -339,7 +339,7 @@ def plot_news_fsi(weekly_df: pd.DataFrame, ibov_df: pd.DataFrame = None,
                      where=weekly_df['news_fsi'] <= 0.5, alpha=0.25, color=COLORS['low_stress'], label='Low Stress')
     ax1.set_ylabel('News FSI (0-1 scale)')
     ax1.set_ylim(0, 1)
-    ax1.set_title('News-Based Financial Stress Index (Baker et al. 2019 style)')
+    ax1.set_title('News-Based Financial Stress Index')
     ax1.legend(loc='upper right')
 
     # Plot 2: Article counts
