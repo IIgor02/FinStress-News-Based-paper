@@ -65,9 +65,10 @@ OUTPUT_DIR = _PROJECT_DIR / 'output'
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Minimum terms required for an article to be considered "stress-related"
+# Using TWO-WAY co-occurrence: financial + (stress OR negative)
+# This is more inclusive than three-way co-occurrence
 MIN_FINANCIAL_TERMS = 1
-MIN_STRESS_TERMS = 1
-MIN_NEGATIVE_TERMS = 1
+MIN_STRESS_OR_NEGATIVE_TERMS = 1  # At least one stress OR negative term
 
 
 # =============================================================================
@@ -108,6 +109,9 @@ def analyze_article(title: str, summary: str = '') -> Dict:
     """
     Analyze a single article for financial stress content.
 
+    Uses TWO-WAY co-occurrence: financial + (stress OR negative)
+    This captures more stress-related articles than three-way co-occurrence.
+
     Returns:
         Dictionary with analysis results
     """
@@ -118,17 +122,23 @@ def analyze_article(title: str, summary: str = '') -> Dict:
     stress_count, stress_terms = count_term_matches(full_text, DICTIONARIES['stress'])
     negative_count, negative_terms = count_term_matches(full_text, DICTIONARIES['negative'])
 
-    # Check for three-way co-occurrence (Baker et al. style)
+    # Combined stress+negative count (for two-way co-occurrence)
+    stress_negative_count = stress_count + negative_count
+
+    # TWO-WAY co-occurrence: financial + (stress OR negative)
+    # This is more inclusive and captures more stress-related articles
     has_cooccurrence = (
         financial_count >= MIN_FINANCIAL_TERMS and
-        stress_count >= MIN_STRESS_TERMS and
-        negative_count >= MIN_NEGATIVE_TERMS
+        stress_negative_count >= MIN_STRESS_OR_NEGATIVE_TERMS
     )
 
-    # Calculate stress score
-    # Score = product of term counts (gives weight to articles with multiple matches)
+    # Calculate stress score using weighted approach
+    # Higher weight for stress terms (they directly indicate stress)
+    # Negative terms add context but are less specific
     if has_cooccurrence:
-        stress_score = (financial_count * stress_count * negative_count) ** (1/3)  # Geometric mean
+        # Weighted score: stress terms count more than negative terms
+        weighted_stress = (stress_count * 2) + negative_count
+        stress_score = (financial_count * weighted_stress) ** 0.5  # Geometric-like mean
     else:
         stress_score = 0
 
@@ -136,6 +146,7 @@ def analyze_article(title: str, summary: str = '') -> Dict:
         'financial_count': financial_count,
         'stress_count': stress_count,
         'negative_count': negative_count,
+        'stress_negative_count': stress_negative_count,
         'total_terms': financial_count + stress_count + negative_count,
         'has_cooccurrence': has_cooccurrence,
         'stress_score': stress_score,
@@ -188,7 +199,8 @@ def aggregate_to_weekly(df: pd.DataFrame) -> pd.DataFrame:
         df: DataFrame with article analysis and 'date' column
 
     Returns:
-        DataFrame with weekly FSI
+        DataFrame with weekly FSI scaled to 0-1 range
+        where 0 = no stress and 1 = maximum stress
     """
     df = df.copy()
 
@@ -223,24 +235,31 @@ def aggregate_to_weekly(df: pd.DataFrame) -> pd.DataFrame:
     # FSI = total stress score / number of articles (density)
     weekly['fsi_raw'] = weekly['stress_sum'] / weekly['article_count']
 
-    # Alternative: proportion of stress articles
+    # Proportion of stress articles (alternative measure)
     weekly['fsi_proportion'] = weekly['stress_articles'] / weekly['article_count']
 
-    # Standardize to mean=100
-    fsi_mean = weekly['fsi_raw'].mean()
-    fsi_std = weekly['fsi_raw'].std()
-    if fsi_std > 0:
-        weekly['news_fsi'] = 100 + 25 * (weekly['fsi_raw'] - fsi_mean) / fsi_std
+    # Normalize FSI to 0-1 scale using min-max normalization
+    # 0 = minimum historical stress, 1 = maximum historical stress
+    fsi_min = weekly['fsi_raw'].min()
+    fsi_max = weekly['fsi_raw'].max()
+
+    if fsi_max > fsi_min:
+        weekly['news_fsi'] = (weekly['fsi_raw'] - fsi_min) / (fsi_max - fsi_min)
     else:
-        weekly['news_fsi'] = 100
+        weekly['news_fsi'] = 0.5  # Default to middle if no variation
+
+    # Ensure values are bounded [0, 1]
+    weekly['news_fsi'] = weekly['news_fsi'].clip(0, 1)
 
     return weekly
 
 
 def standardize_fsi(fsi_series: pd.Series, vol_series: pd.Series = None) -> pd.Series:
     """
-    Standardize FSI to mean=100 scale.
+    Ensure FSI is properly oriented (higher = more stress).
     If volatility is provided, ensure positive correlation.
+
+    FSI is already on 0-1 scale, so we just check orientation.
     """
     fsi = fsi_series.copy()
 
@@ -253,18 +272,14 @@ def standardize_fsi(fsi_series: pd.Series, vol_series: pd.Series = None) -> pd.S
         if len(common_idx) > 10:
             corr = fsi_aligned.loc[common_idx].corr(vol_aligned.loc[common_idx])
             if corr < 0:
-                print(f"    Note: Flipping FSI sign (correlation with volatility was {corr:.3f})")
-                fsi = -fsi
+                print(f"    Note: Flipping FSI (correlation with volatility was {corr:.3f})")
+                # Flip around 0.5 to maintain 0-1 scale
+                fsi = 1 - fsi
 
-    # Standardize to mean=100, std~25
-    fsi_mean = fsi.mean()
-    fsi_std = fsi.std()
-    if fsi_std > 0:
-        fsi_standardized = 100 + 25 * (fsi - fsi_mean) / fsi_std
-    else:
-        fsi_standardized = pd.Series(100, index=fsi.index)
+    # Ensure values are bounded [0, 1]
+    fsi = fsi.clip(0, 1)
 
-    return fsi_standardized
+    return fsi
 
 
 # =============================================================================
@@ -285,16 +300,17 @@ def plot_news_fsi(weekly_df: pd.DataFrame, ibov_df: pd.DataFrame = None,
 
     fig, axes = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
 
-    # Plot 1: News FSI
+    # Plot 1: News FSI (0-1 scale)
     ax1 = axes[0]
     ax1.plot(weekly_df['date'], weekly_df['news_fsi'], 'b-', linewidth=1.5, label='News FSI')
-    ax1.axhline(y=100, color='gray', linestyle='--', alpha=0.5)
-    ax1.fill_between(weekly_df['date'], 100, weekly_df['news_fsi'],
-                     where=weekly_df['news_fsi'] > 100, alpha=0.3, color='red', label='High Stress')
-    ax1.fill_between(weekly_df['date'], 100, weekly_df['news_fsi'],
-                     where=weekly_df['news_fsi'] <= 100, alpha=0.3, color='green', label='Low Stress')
-    ax1.set_ylabel('News FSI')
-    ax1.set_title('News-Based Financial Stress Index (Brazil)')
+    ax1.axhline(y=0.5, color='gray', linestyle='--', alpha=0.5, label='Neutral (0.5)')
+    ax1.fill_between(weekly_df['date'], 0.5, weekly_df['news_fsi'],
+                     where=weekly_df['news_fsi'] > 0.5, alpha=0.3, color='red', label='High Stress')
+    ax1.fill_between(weekly_df['date'], 0.5, weekly_df['news_fsi'],
+                     where=weekly_df['news_fsi'] <= 0.5, alpha=0.3, color='green', label='Low Stress')
+    ax1.set_ylabel('News FSI (0-1 scale)')
+    ax1.set_ylim(0, 1)
+    ax1.set_title('News-Based Financial Stress Index (Brazil) - 0=No Stress, 1=Maximum Stress')
     ax1.legend(loc='upper right')
     ax1.grid(True, alpha=0.3)
 

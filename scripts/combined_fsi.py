@@ -6,7 +6,6 @@ Combines multiple FSI methodologies:
 1. Dictionary-based FSI (Google Trends) - Da et al. (2011)
 2. ML-based FSI (LASSO) - García et al. (2023)
 3. News-based FSI (Article analysis) - Baker et al. (2019) style
-4. Social Media FSI (Twitter/Reddit sentiment)
 
 Usage:
     # Run all methods and combine
@@ -113,21 +112,6 @@ def load_news_fsi() -> Optional[pd.DataFrame]:
     return None
 
 
-def load_social_fsi() -> Optional[pd.DataFrame]:
-    """Load social media FSI from social_fsi.py output."""
-    fsi_path = OUTPUT_DIR / 'social_fsi_weekly.csv'
-
-    if fsi_path.exists():
-        df = pd.read_csv(fsi_path)
-        df['date'] = pd.to_datetime(df['date'])
-        if 'social_fsi' in df.columns:
-            print(f"  Social FSI: {len(df)} weeks")
-            return df[['date', 'social_fsi']]
-
-    print("  Social FSI: Not found (run scripts/social_fsi.py)")
-    return None
-
-
 def load_ibovespa() -> Optional[pd.DataFrame]:
     """Load IBOVESPA data for validation."""
     ibov_path = DATA_DIR / 'ibovespa_data.csv'
@@ -146,17 +130,23 @@ def load_ibovespa() -> Optional[pd.DataFrame]:
 # COMBINATION METHODS
 # =============================================================================
 
-def standardize_series(series: pd.Series, target_mean: float = 100, target_std: float = 25) -> pd.Series:
-    """Standardize a series to target mean and std."""
+def standardize_series(series: pd.Series) -> pd.Series:
+    """
+    Standardize a series to 0-1 scale using min-max normalization.
+
+    0 = minimum stress, 1 = maximum stress
+    """
     valid = series.dropna()
     if len(valid) < 2:
         return series
 
-    mean, std = valid.mean(), valid.std()
-    if std == 0:
-        return pd.Series(target_mean, index=series.index)
+    min_val, max_val = valid.min(), valid.max()
+    if max_val == min_val:
+        return pd.Series(0.5, index=series.index)
 
-    return target_mean + target_std * (series - mean) / std
+    # Min-max normalization to 0-1
+    standardized = (series - min_val) / (max_val - min_val)
+    return standardized.clip(0, 1)
 
 
 def combine_simple_average(fsi_dict: Dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -377,15 +367,16 @@ def plot_combined_fsi(combined_df: pd.DataFrame, ibov_df: pd.DataFrame = None,
     colors = {'dict_fsi': '#2E86AB', 'ml_fsi': '#E94F37', 'news_fsi': '#4ECDC4'}
     labels = {'dict_fsi': 'Dictionary (Da et al.)', 'ml_fsi': 'ML (García et al.)', 'news_fsi': 'News (Baker et al.)'}
 
-    # Plot 1: Individual FSI series
+    # Plot 1: Individual FSI series (0-1 scale)
     ax1 = axes[0]
     for col in fsi_cols:
         ax1.plot(combined_df['date'], combined_df[col],
                  color=colors.get(col, 'gray'), alpha=0.6, linewidth=1,
                  label=labels.get(col, col))
-    ax1.axhline(y=100, color='gray', linestyle='--', alpha=0.5)
-    ax1.set_ylabel('FSI')
-    ax1.set_title('Individual FSI Components')
+    ax1.axhline(y=0.5, color='gray', linestyle='--', alpha=0.5)
+    ax1.set_ylabel('FSI (0-1 scale)')
+    ax1.set_ylim(0, 1)
+    ax1.set_title('Individual FSI Components (0=No Stress, 1=Maximum Stress)')
     ax1.legend(loc='upper right')
     ax1.grid(True, alpha=0.3)
 
@@ -395,17 +386,18 @@ def plot_combined_fsi(combined_df: pd.DataFrame, ibov_df: pd.DataFrame = None,
         if combined_df['date'].min() <= end_dt and combined_df['date'].max() >= start_dt:
             ax1.axvspan(start_dt, end_dt, alpha=0.1, color='red')
 
-    # Plot 2: Combined FSI
+    # Plot 2: Combined FSI (0-1 scale)
     ax2 = axes[1]
     ax2.plot(combined_df['date'], combined_df['combined_fsi'],
              color='black', linewidth=2, label='Combined FSI')
-    ax2.fill_between(combined_df['date'], 100, combined_df['combined_fsi'],
-                     where=combined_df['combined_fsi'] > 100, alpha=0.3, color='red')
-    ax2.fill_between(combined_df['date'], 100, combined_df['combined_fsi'],
-                     where=combined_df['combined_fsi'] <= 100, alpha=0.3, color='green')
-    ax2.axhline(y=100, color='gray', linestyle='--', alpha=0.5)
-    ax2.set_ylabel('Combined FSI')
-    ax2.set_title('Combined Financial Stress Index')
+    ax2.fill_between(combined_df['date'], 0.5, combined_df['combined_fsi'],
+                     where=combined_df['combined_fsi'] > 0.5, alpha=0.3, color='red')
+    ax2.fill_between(combined_df['date'], 0.5, combined_df['combined_fsi'],
+                     where=combined_df['combined_fsi'] <= 0.5, alpha=0.3, color='green')
+    ax2.axhline(y=0.5, color='gray', linestyle='--', alpha=0.5)
+    ax2.set_ylabel('Combined FSI (0-1 scale)')
+    ax2.set_ylim(0, 1)
+    ax2.set_title('Combined Financial Stress Index (0=No Stress, 1=Maximum Stress)')
     ax2.legend(loc='upper right')
     ax2.grid(True, alpha=0.3)
 
@@ -495,10 +487,6 @@ def main():
     if news_fsi is not None:
         fsi_dict['news_fsi'] = news_fsi
 
-    social_fsi = load_social_fsi()
-    if social_fsi is not None:
-        fsi_dict['social_fsi'] = social_fsi
-
     ibov_df = load_ibovespa()
 
     if len(fsi_dict) == 0:
@@ -506,7 +494,6 @@ def main():
         print("    - python scripts/run_fsi.py (Dictionary FSI)")
         print("    - python scripts/ml_fsi.py (ML FSI)")
         print("    - python scripts/news_fsi.py (News FSI)")
-        print("    - python scripts/social_fsi.py (Social FSI)")
         return
 
     print(f"\n  Found {len(fsi_dict)} FSI series: {list(fsi_dict.keys())}")

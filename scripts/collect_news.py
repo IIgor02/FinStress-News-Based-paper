@@ -349,11 +349,11 @@ def scrape_g1_selenium(driver, start_year: int, end_year: int,
         year_articles = []
         print(f"    Year {year}...", end=" ", flush=True)
 
-        for keyword in keywords[:3]:  # Limit keywords
+        for keyword in keywords[:5]:  # Use same number as Folha
             from_date = f"{year}-01-01T00:00:00-0300"
             to_date = f"{year}-12-31T23:59:59-0300"
 
-            for page in range(1, 6):  # Max 5 pages per keyword
+            for page in range(1, 11):  # Max 10 pages per keyword
                 url = (
                     f"https://g1.globo.com/busca/?"
                     f"q={quote(keyword)}&page={page}&order=recent&species=not%C3%ADcias"
@@ -452,11 +452,11 @@ def scrape_valor_selenium(driver, start_year: int, end_year: int,
         year_articles = []
         print(f"    Year {year}...", end=" ", flush=True)
 
-        for keyword in keywords[:3]:
+        for keyword in keywords[:5]:  # Use same number as Folha
             from_date = f"{year}-01-01T00:00:00-0300"
             to_date = f"{year}-12-31T23:59:59-0300"
 
-            for page in range(1, 6):
+            for page in range(1, 11):  # Max 10 pages per keyword
                 url = (
                     f"https://valor.globo.com/busca/?"
                     f"q={quote(keyword)}&page={page}&order=recent"
