@@ -35,6 +35,25 @@ Multiple complementary Financial Stress Indices for Brazil using Google Trends, 
 - All components normalized to 0-1 before combining
 - Output: 0-1 scale
 
+### 5. Econometric Enhancements
+
+#### Kalman Filter Smoothing
+- Treats FSI as latent variable observed with noise
+- Separates signal from noise using state-space model
+- Imputes missing values via Kalman smoothing (not linear interpolation)
+- Provides variance decomposition analysis
+
+#### Markov Switching Regime Analysis
+- Identifies "Crisis" vs "Calm" regimes using Hamilton (1989) methodology
+- Estimates regime-specific means and variances
+- Provides transition probabilities and expected regime durations
+- Validates against known historical crisis periods
+
+#### CDS Benchmark Integration
+- Compares FSI against Brazil 5Y CDS spread
+- CDS serves as market-based sovereign stress indicator
+- Calculates correlations and generates comparison plots
+
 ## Quick Start
 
 ```bash
@@ -55,6 +74,16 @@ python scripts/news_fsi.py
 
 # === COMBINED FSI ===
 python scripts/combined_fsi.py --method weighted
+
+# === ADVANCED ANALYSIS ===
+# Kalman smoothing
+python scripts/analyze_fsi.py --smooth
+
+# With CDS benchmark
+python scripts/analyze_fsi.py --smooth --cds
+
+# Regime analysis (Markov Switching)
+python scripts/regime_analysis.py
 ```
 
 ## Project Structure
@@ -62,15 +91,20 @@ python scripts/combined_fsi.py --method weighted
 ```
 FinStress-News-Based-paper/
 ├── scripts/
-│   ├── dictionaries.py    # Dictionary definitions (270+ terms, 100+ queries)
-│   ├── collect_data.py    # Google Trends + IBOVESPA collection
-│   ├── collect_news.py    # News scraping (G1, Valor, Folha)
-│   ├── run_fsi.py         # Dictionary-based FSI (Da et al.)
-│   ├── ml_fsi.py          # ML-based FSI (García et al.)
-│   ├── news_fsi.py        # News-based FSI (Baker et al.)
-│   └── combined_fsi.py    # Combined FSI (all methods)
-├── data/raw/              # Input data
-├── output/                # Results and plots
+│   ├── dictionaries.py      # Dictionary definitions (270+ terms, 100+ queries)
+│   ├── collect_data.py      # Google Trends + IBOVESPA collection
+│   ├── collect_news.py      # News scraping (G1, Valor, Folha)
+│   ├── run_fsi.py           # Dictionary-based FSI (Da et al.)
+│   ├── ml_fsi.py            # ML-based FSI (García et al.)
+│   ├── news_fsi.py          # News-based FSI (Baker et al.)
+│   ├── combined_fsi.py      # Combined FSI (all methods)
+│   ├── analyze_fsi.py       # Comprehensive FSI analysis + CDS benchmark
+│   ├── econometrics.py      # Kalman Filter smoothing & gap imputation
+│   └── regime_analysis.py   # Markov Switching regime identification
+├── data/raw/                # Input data
+├── output/                  # Results and plots
+│   ├── results/             # FSI CSVs
+│   └── plots/               # Visualization PNGs
 └── requirements.txt
 ```
 
@@ -218,11 +252,86 @@ Method 4: Dynamic weights based on rolling correlation with volatility
 - **News scraping**: Folha is fastest (HTTP only); G1/Valor require Selenium
 - **Memory**: For very large news datasets, FSI calculation is optimized with efficient pandas operations
 
+## Advanced Econometric Methods
+
+### Kalman Filter Smoothing
+
+The state-space model treats FSI as a latent variable:
+
+```
+Observation: y_t = α_t + ε_t,    ε_t ~ N(0, σ²_ε)
+State:       α_{t+1} = α_t + η_t,  η_t ~ N(0, σ²_η)
+```
+
+Where:
+- `y_t` = Observed (noisy) FSI
+- `α_t` = Latent (true) financial stress level
+- `ε_t` = Observation noise
+- `η_t` = State transition noise
+
+Usage:
+```bash
+# Apply Kalman smoothing during analysis
+python scripts/analyze_fsi.py --smooth
+
+# Or use the econometrics module directly
+python scripts/econometrics.py
+```
+
+### Markov Switching Regime Analysis
+
+The Hamilton (1989) model assumes FSI depends on a latent regime:
+
+```
+y_t = μ_{S_t} + σ_{S_t} * ε_t,    ε_t ~ N(0, 1)
+```
+
+Where `S_t ∈ {0, 1}` follows a Markov chain with transition matrix P:
+
+```
+P = | p_00  p_01 |
+    | p_10  p_11 |
+```
+
+This identifies:
+- **Regime 0 (Calm)**: Low mean, low variance
+- **Regime 1 (Crisis)**: High mean, high variance
+
+Usage:
+```bash
+# Run regime analysis
+python scripts/regime_analysis.py
+
+# Use Kalman-smoothed data
+python scripts/regime_analysis.py --smooth
+
+# Custom probability threshold
+python scripts/regime_analysis.py --threshold 0.7
+```
+
+### CDS Benchmark
+
+Brazil 5Y CDS spread serves as market-based validation:
+
+```bash
+# Include CDS in analysis
+python scripts/analyze_fsi.py --cds
+
+# Full analysis with smoothing and CDS
+python scripts/analyze_fsi.py --smooth --cds
+```
+
+To use CDS data, place a CSV file at `data/raw/brazil_cds_5y.csv` with columns:
+- `date`: Date in YYYY-MM-DD format
+- `cds_5y`: CDS spread in basis points
+
 ## References
 
 - Da, Z., Engelberg, J., & Gao, P. (2011). In Search of Attention. *The Journal of Finance*.
 - García, D., Hu, X., & Rohrer, M. (2023). The Color of Finance Words. *Journal of Financial Economics*.
 - Baker, S.R., Bloom, N., & Davis, S.J. (2016). Measuring Economic Policy Uncertainty. *Quarterly Journal of Economics*.
+- Hamilton, J.D. (1989). A New Approach to the Economic Analysis of Nonstationary Time Series and the Business Cycle. *Econometrica*.
+- Durbin, J., & Koopman, S.J. (2012). Time Series Analysis by State Space Methods. *Oxford University Press*.
 
 ## Author
 

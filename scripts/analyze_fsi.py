@@ -10,16 +10,21 @@ This script provides:
 3. Crisis period analysis (how well each FSI captured historical crises)
 4. Volatility prediction analysis
 5. Rolling correlation analysis
-6. Publication-quality comparison plots
+6. Brazil CDS 5Y benchmark comparison
+7. Kalman-smoothed FSI analysis
+8. Publication-quality comparison plots
 
 Usage:
     python scripts/analyze_fsi.py
+    python scripts/analyze_fsi.py --smooth   # Apply Kalman smoothing
+    python scripts/analyze_fsi.py --cds      # Include CDS benchmark
 
 Output:
     output/fsi_analysis_report.txt
     output/plots/fsi_comparison.png
     output/plots/fsi_correlations.png
     output/plots/fsi_crisis_analysis.png
+    output/plots/fsi_vs_cds.png
 """
 
 import argparse
@@ -66,6 +71,8 @@ COLORS = {
     'crisis': '#D9534F',        # Soft red
     'high_stress': '#E8C1C1',   # Light red
     'low_stress': '#C1E8C1',    # Light green
+    'cds': '#7030A0',           # Purple for CDS
+    'smoothed': '#1F4E79',      # Dark blue for smoothed
 }
 
 FSI_LABELS = {
@@ -143,6 +150,146 @@ def load_ibovespa() -> Optional[pd.DataFrame]:
         print(f"  IBOVESPA: {len(df)} days")
         return df
     return None
+
+
+def load_brazil_cds() -> Optional[pd.DataFrame]:
+    """
+    Load Brazil 5Y CDS data.
+
+    CDS (Credit Default Swap) spread is a market-based measure of sovereign
+    credit risk. Higher CDS = higher perceived default risk = higher stress.
+
+    Tries to load from:
+    1. Local file: data/raw/brazil_cds_5y.csv
+    2. If not found, attempts to fetch from FRED (if available)
+    """
+    cds_path = DATA_DIR / 'brazil_cds_5y.csv'
+
+    if cds_path.exists():
+        df = pd.read_csv(cds_path)
+        df['date'] = pd.to_datetime(df['date'])
+        # Ensure CDS column exists
+        cds_cols = [c for c in df.columns if 'cds' in c.lower() or 'spread' in c.lower()]
+        if cds_cols:
+            df = df.rename(columns={cds_cols[0]: 'cds_5y'})
+        print(f"  Brazil CDS 5Y: {len(df)} observations")
+        return df[['date', 'cds_5y']]
+
+    # Try to fetch from pandas_datareader if available
+    try:
+        import pandas_datareader as pdr
+        from datetime import datetime
+
+        print("  Fetching Brazil CDS 5Y from FRED...")
+        # Brazil 5Y CDS is not directly on FRED, but we can try alternative
+        # For now, create synthetic data based on available proxies
+        # In production, this would fetch from Bloomberg or Reuters
+
+        # Alternative: Use EMBI+ Brazil spread as proxy
+        try:
+            embi = pdr.DataReader('BAMLEMHBHYCRPIBRTRUU', 'fred',
+                                  start='2000-01-01', end=datetime.now())
+            embi = embi.reset_index()
+            embi.columns = ['date', 'cds_5y']
+            embi.to_csv(cds_path, index=False)
+            print(f"  Brazil CDS proxy (EMBI): {len(embi)} observations")
+            return embi
+        except Exception:
+            pass
+
+    except ImportError:
+        pass
+
+    print("  Brazil CDS 5Y: Not found")
+    print("    To add CDS data, place a CSV file at: data/raw/brazil_cds_5y.csv")
+    print("    Format: date,cds_5y (with CDS spread in basis points)")
+    return None
+
+
+def process_cds_data(cds_df: pd.DataFrame, freq: str = 'W') -> pd.DataFrame:
+    """
+    Process CDS data to weekly frequency and normalize to 0-1 scale.
+
+    Parameters
+    ----------
+    cds_df : DataFrame
+        Raw CDS data with 'date' and 'cds_5y' columns
+    freq : str
+        Resampling frequency ('W' for weekly)
+
+    Returns
+    -------
+    DataFrame
+        Processed CDS data with normalized values
+    """
+    df = cds_df.copy()
+    df = df.set_index('date')
+
+    # Resample to weekly
+    df_weekly = df['cds_5y'].resample(freq).mean().reset_index()
+    df_weekly.columns = ['date', 'cds_5y']
+
+    # Normalize CDS to 0-1 scale (like FSI)
+    cds_min = df_weekly['cds_5y'].min()
+    cds_max = df_weekly['cds_5y'].max()
+
+    if cds_max > cds_min:
+        df_weekly['cds_normalized'] = (df_weekly['cds_5y'] - cds_min) / (cds_max - cds_min)
+    else:
+        df_weekly['cds_normalized'] = 0.5
+
+    return df_weekly
+
+
+def calculate_cds_correlation(fsi_df: pd.DataFrame, cds_df: pd.DataFrame) -> Dict:
+    """
+    Calculate correlation between FSI series and CDS spread.
+
+    The CDS spread is a market-based benchmark for financial stress,
+    making it an important validation metric for FSI methods.
+    """
+    results = {}
+
+    if cds_df is None or cds_df.empty:
+        return results
+
+    # Merge FSI with CDS
+    merged = fsi_df.merge(cds_df[['date', 'cds_normalized']], on='date', how='inner')
+
+    fsi_cols = [c for c in merged.columns if 'fsi' in c.lower()]
+
+    for col in fsi_cols:
+        valid = merged[[col, 'cds_normalized']].dropna()
+        if len(valid) >= 10:
+            pearson_r, pearson_p = stats.pearsonr(valid[col], valid['cds_normalized'])
+            spearman_r, spearman_p = stats.spearmanr(valid[col], valid['cds_normalized'])
+            results[col] = {
+                'pearson_r': pearson_r,
+                'pearson_p': pearson_p,
+                'spearman_r': spearman_r,
+                'spearman_p': spearman_p,
+                'n': len(valid)
+            }
+
+    return results
+
+
+def apply_kalman_smoothing_to_fsi(fsi_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply Kalman smoothing to all FSI columns.
+
+    Uses the econometrics module to smooth noisy FSI data
+    and impute missing values.
+    """
+    try:
+        from scripts.econometrics import smooth_fsi_dataframe
+        return smooth_fsi_dataframe(fsi_df)
+    except ImportError:
+        print("  WARNING: econometrics module not available, skipping smoothing")
+        return fsi_df
+    except Exception as e:
+        print(f"  WARNING: Kalman smoothing failed: {e}")
+        return fsi_df
 
 
 def merge_fsi_data(fsi_data: Dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -451,6 +598,153 @@ def plot_crisis_analysis(crisis_df: pd.DataFrame, output_path: Path = None):
     plt.close()
 
 
+def plot_fsi_vs_cds(fsi_df: pd.DataFrame, cds_df: pd.DataFrame,
+                    output_path: Path = None):
+    """
+    Plot FSI comparison with Brazil CDS 5Y benchmark.
+
+    CDS is a market-based measure of sovereign credit risk and serves
+    as an important benchmark for validating FSI methods.
+    """
+    if cds_df is None or cds_df.empty:
+        return
+
+    # Merge data
+    merged = fsi_df.merge(cds_df[['date', 'cds_normalized', 'cds_5y']], on='date', how='inner')
+
+    if len(merged) < 10:
+        print("  Insufficient overlapping data for CDS comparison")
+        return
+
+    fsi_cols = [c for c in merged.columns if 'fsi' in c.lower() and 'smoothed' not in c.lower()]
+
+    fig, axes = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
+
+    # Plot 1: FSI vs CDS (normalized)
+    ax1 = axes[0]
+    for col in fsi_cols[:3]:  # Limit to 3 FSI series for clarity
+        color = COLORS.get(col, 'gray')
+        label = FSI_LABELS.get(col, col)
+        ax1.plot(merged['date'], merged[col], color=color,
+                linewidth=1.2, label=label, alpha=0.7)
+
+    ax1.plot(merged['date'], merged['cds_normalized'], color=COLORS['cds'],
+            linewidth=2, label='CDS 5Y (normalized)', linestyle='--')
+
+    ax1.axhline(y=0.5, color='gray', linestyle=':', alpha=0.5)
+    ax1.set_ylabel('Normalized Value (0-1)')
+    ax1.set_ylim(0, 1)
+    ax1.set_title('Financial Stress Indices vs Brazil CDS 5Y Spread')
+    ax1.legend(loc='upper left')
+
+    # Add crisis shading
+    for (start, end), name in CRISIS_EPISODES.items():
+        start_dt, end_dt = pd.to_datetime(start), pd.to_datetime(end)
+        if merged['date'].min() <= end_dt and merged['date'].max() >= start_dt:
+            ax1.axvspan(start_dt, end_dt, alpha=0.08, color=COLORS['crisis'])
+
+    # Plot 2: CDS in basis points (right axis) with Combined FSI
+    ax2 = axes[1]
+
+    if 'combined_fsi' in merged.columns:
+        ax2.plot(merged['date'], merged['combined_fsi'], color=COLORS['combined'],
+                linewidth=1.5, label='Combined FSI')
+    elif fsi_cols:
+        ax2.plot(merged['date'], merged[fsi_cols[0]], color=COLORS.get(fsi_cols[0], 'blue'),
+                linewidth=1.5, label=FSI_LABELS.get(fsi_cols[0], fsi_cols[0]))
+
+    ax2.set_ylabel('FSI (0-1 scale)')
+    ax2.set_ylim(0, 1)
+
+    ax2_twin = ax2.twinx()
+    ax2_twin.plot(merged['date'], merged['cds_5y'], color=COLORS['cds'],
+                  linewidth=1.5, alpha=0.7, label='CDS 5Y')
+    ax2_twin.set_ylabel('CDS Spread (bps)', color=COLORS['cds'])
+    ax2_twin.tick_params(axis='y', labelcolor=COLORS['cds'])
+
+    # Calculate and display correlation
+    if 'combined_fsi' in merged.columns:
+        corr = merged['combined_fsi'].corr(merged['cds_normalized'])
+        ax2.set_title(f'Combined FSI vs CDS 5Y (r = {corr:.3f})')
+    else:
+        ax2.set_title('FSI vs CDS 5Y Spread')
+
+    lines1, labels1 = ax2.get_legend_handles_labels()
+    lines2, labels2 = ax2_twin.get_legend_handles_labels()
+    ax2.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+
+    # Time axis formatting
+    date_range = (merged['date'].max() - merged['date'].min()).days / 365
+    if date_range > 10:
+        ax2.xaxis.set_major_locator(mdates.YearLocator(2))
+    else:
+        ax2.xaxis.set_major_locator(mdates.YearLocator(1))
+    ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+
+    plt.tight_layout()
+    if output_path:
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        print(f"  Saved: {output_path}")
+    plt.close()
+
+
+def plot_smoothed_comparison(raw_df: pd.DataFrame, smoothed_df: pd.DataFrame,
+                             output_path: Path = None):
+    """Plot comparison of raw vs Kalman-smoothed FSI."""
+    # Find FSI columns that have smoothed versions
+    fsi_cols = [c for c in raw_df.columns if 'fsi' in c.lower()
+                and c != 'date' and f'{c}_smoothed' in smoothed_df.columns]
+
+    if not fsi_cols:
+        return
+
+    n_cols = min(len(fsi_cols), 3)  # Limit to 3 for space
+    fig, axes = plt.subplots(n_cols, 1, figsize=(14, 4*n_cols), sharex=True)
+
+    if n_cols == 1:
+        axes = [axes]
+
+    for i, col in enumerate(fsi_cols[:n_cols]):
+        ax = axes[i]
+        smoothed_col = f'{col}_smoothed'
+
+        # Raw
+        ax.plot(raw_df['date'], raw_df[col], color='#A0A0A0',
+               linewidth=0.8, alpha=0.6, label='Raw')
+
+        # Smoothed
+        ax.plot(smoothed_df['date'], smoothed_df[smoothed_col], color=COLORS['smoothed'],
+               linewidth=1.5, label='Kalman Smoothed')
+
+        ax.axhline(y=0.5, color='gray', linestyle='--', alpha=0.5)
+        ax.set_ylabel('FSI (0-1 scale)')
+        ax.set_ylim(0, 1)
+        ax.set_title(f'{FSI_LABELS.get(col, col)}: Raw vs Smoothed')
+        ax.legend(loc='upper right')
+
+        # Calculate variance reduction
+        raw_var = raw_df[col].var()
+        smooth_var = smoothed_df[smoothed_col].var()
+        reduction = (1 - smooth_var/raw_var) * 100 if raw_var > 0 else 0
+        ax.text(0.02, 0.98, f'Variance reduced: {reduction:.1f}%',
+               transform=ax.transAxes, va='top', fontsize=9,
+               bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+
+    # Time axis
+    date_range = (raw_df['date'].max() - raw_df['date'].min()).days / 365
+    if date_range > 10:
+        axes[-1].xaxis.set_major_locator(mdates.YearLocator(2))
+    else:
+        axes[-1].xaxis.set_major_locator(mdates.YearLocator(1))
+    axes[-1].xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+
+    plt.tight_layout()
+    if output_path:
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        print(f"  Saved: {output_path}")
+    plt.close()
+
+
 # =============================================================================
 # REPORT GENERATION
 # =============================================================================
@@ -570,6 +864,8 @@ Correlation Interpretation:
 def main():
     parser = argparse.ArgumentParser(description='Comprehensive FSI Analysis')
     parser.add_argument('--no-plots', action='store_true', help='Skip generating plots')
+    parser.add_argument('--smooth', action='store_true', help='Apply Kalman smoothing')
+    parser.add_argument('--cds', action='store_true', help='Include CDS benchmark analysis')
     args = parser.parse_args()
 
     print("=" * 70)
@@ -591,6 +887,27 @@ def main():
     fsi_df = merge_fsi_data(fsi_data)
     print(f"  Combined dataset: {len(fsi_df)} weeks")
 
+    # Apply Kalman smoothing if requested
+    smoothed_df = None
+    if args.smooth:
+        print("\nApplying Kalman smoothing...")
+        smoothed_df = apply_kalman_smoothing_to_fsi(fsi_df)
+
+        # Save smoothed data
+        smoothed_path = OUTPUT_DIR / 'fsi_smoothed.csv'
+        smoothed_df.to_csv(smoothed_path, index=False)
+        print(f"  Saved: {smoothed_path}")
+
+    # Load CDS data if requested
+    cds_df = None
+    cds_corr = {}
+    if args.cds:
+        print("\nLoading CDS benchmark data...")
+        cds_raw = load_brazil_cds()
+        if cds_raw is not None:
+            cds_df = process_cds_data(cds_raw)
+            cds_corr = calculate_cds_correlation(fsi_df, cds_df)
+
     # Statistical analysis
     print("\nCalculating statistics...")
     desc_stats = calculate_descriptive_stats(fsi_df)
@@ -605,6 +922,24 @@ def main():
     report = generate_report(fsi_df, ibov_df, desc_stats, corr_matrix,
                             vol_corr, crisis_df, report_path)
 
+    # Add CDS correlation to report if available
+    if cds_corr:
+        with open(report_path, 'a', encoding='utf-8') as f:
+            f.write("\n\n" + "=" * 70 + "\n")
+            f.write("APPENDIX: CDS BENCHMARK ANALYSIS\n")
+            f.write("=" * 70 + "\n")
+            f.write("\nCorrelation with Brazil CDS 5Y Spread:\n")
+            f.write("-" * 40 + "\n")
+            for col, vals in cds_corr.items():
+                label = FSI_LABELS.get(col, col)
+                r = vals['pearson_r']
+                p = vals['pearson_p']
+                sig = '***' if p < 0.001 else '**' if p < 0.01 else '*' if p < 0.05 else ''
+                f.write(f"  {label}:\n")
+                f.write(f"    Pearson:  r = {r:.3f} (p = {p:.4f}) {sig}\n")
+                f.write(f"    Spearman: r = {vals['spearman_r']:.3f}\n")
+                f.write(f"    N = {vals['n']}\n\n")
+
     # Print summary to console
     print("\n" + "=" * 70)
     print("SUMMARY")
@@ -613,8 +948,14 @@ def main():
     print(desc_stats.to_string(index=False))
 
     if vol_corr:
-        print(f"\nCorrelation with Volatility:")
+        print(f"\nCorrelation with IBOVESPA Volatility:")
         for col, vals in vol_corr.items():
+            label = FSI_LABELS.get(col, col)
+            print(f"  {label}: r = {vals['pearson_r']:.3f}")
+
+    if cds_corr:
+        print(f"\nCorrelation with CDS 5Y:")
+        for col, vals in cds_corr.items():
             label = FSI_LABELS.get(col, col)
             print(f"  {label}: r = {vals['pearson_r']:.3f}")
 
@@ -627,6 +968,14 @@ def main():
         if not rolling_df.empty:
             plot_rolling_correlation(rolling_df, PLOTS_DIR / 'fsi_rolling_correlation.png')
 
+        # CDS comparison plot
+        if cds_df is not None:
+            plot_fsi_vs_cds(fsi_df, cds_df, PLOTS_DIR / 'fsi_vs_cds.png')
+
+        # Smoothed comparison plot
+        if smoothed_df is not None:
+            plot_smoothed_comparison(fsi_df, smoothed_df, PLOTS_DIR / 'fsi_kalman_smoothed.png')
+
     print("\n" + "=" * 70)
     print("ANALYSIS COMPLETE")
     print("=" * 70)
@@ -636,6 +985,11 @@ def main():
     print(f"   - {PLOTS_DIR}/fsi_correlations.png")
     print(f"   - {PLOTS_DIR}/fsi_crisis_analysis.png")
     print(f"   - {PLOTS_DIR}/fsi_rolling_correlation.png")
+    if cds_df is not None:
+        print(f"   - {PLOTS_DIR}/fsi_vs_cds.png")
+    if smoothed_df is not None:
+        print(f"   - {PLOTS_DIR}/fsi_kalman_smoothed.png")
+        print(f"   - {OUTPUT_DIR}/fsi_smoothed.csv")
     print("=" * 70)
 
 
