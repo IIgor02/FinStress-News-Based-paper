@@ -337,15 +337,22 @@ class MarkovSwitchingFSI:
 
         # Expected durations (ergodic)
         # Duration = 1 / (1 - p_ii)
-        p_00 = trans_mat[0, 0]
-        p_11 = trans_mat[1, 1]
-        duration_calm = 1 / (1 - p_00) if p_00 < 1 else np.inf
-        duration_crisis = 1 / (1 - p_11) if p_11 < 1 else np.inf
+        # Extract scalar values from transition matrix
+        p_00 = float(trans_mat[0, 0].item() if hasattr(trans_mat[0, 0], 'item') else trans_mat[0, 0])
+        p_11 = float(trans_mat[1, 1].item() if hasattr(trans_mat[1, 1], 'item') else trans_mat[1, 1])
+        duration_calm = 1 / (1 - p_00) if p_00 < 1 else float('inf')
+        duration_crisis = 1 / (1 - p_11) if p_11 < 1 else float('inf')
 
         # Get dates
         dates = self.model.endog.index if hasattr(self.model.endog, 'index') else None
         if dates is None:
             dates = pd.RangeIndex(len(smoothed_crisis))
+
+        # Convert all transition matrix values to Python floats
+        p_calm_calm = float(trans_mat[0, 0].item() if hasattr(trans_mat[0, 0], 'item') else trans_mat[0, 0])
+        p_calm_crisis = float(trans_mat[0, 1].item() if hasattr(trans_mat[0, 1], 'item') else trans_mat[0, 1])
+        p_crisis_calm = float(trans_mat[1, 0].item() if hasattr(trans_mat[1, 0], 'item') else trans_mat[1, 0])
+        p_crisis_crisis = float(trans_mat[1, 1].item() if hasattr(trans_mat[1, 1], 'item') else trans_mat[1, 1])
 
         return RegimeResults(
             smoothed_probs=smoothed_crisis,
@@ -354,10 +361,10 @@ class MarkovSwitchingFSI:
             mu_crisis=mu_crisis,
             sigma_calm=sigma_calm,
             sigma_crisis=sigma_crisis,
-            p_calm_calm=trans_mat[0, 0],
-            p_calm_crisis=trans_mat[0, 1],
-            p_crisis_calm=trans_mat[1, 0],
-            p_crisis_crisis=trans_mat[1, 1],
+            p_calm_calm=p_calm_calm,
+            p_calm_crisis=p_calm_crisis,
+            p_crisis_calm=p_crisis_calm,
+            p_crisis_crisis=p_crisis_crisis,
             duration_calm=duration_calm,
             duration_crisis=duration_crisis,
             log_likelihood=self.results.llf,
@@ -673,19 +680,21 @@ def generate_regime_report(fsi: pd.Series, results: RegimeResults,
     lines.append("2. REGIME PARAMETERS")
     lines.append("=" * 70)
 
-    # Convert numpy types to Python floats
-    dur_calm = float(results.duration_calm) if np.isfinite(results.duration_calm) else float('inf')
-    dur_crisis = float(results.duration_crisis) if np.isfinite(results.duration_crisis) else float('inf')
+    # Duration values are already Python floats from get_results()
+    dur_calm = results.duration_calm
+    dur_crisis = results.duration_crisis
+    dur_calm_str = '∞' if dur_calm == float('inf') else f'{dur_calm:.1f}'
+    dur_crisis_str = '∞' if dur_crisis == float('inf') else f'{dur_crisis:.1f}'
 
     lines.append("\n  CALM REGIME (S=0):")
-    lines.append(f"    Mean (μ₀):           {float(results.mu_calm):.4f}")
-    lines.append(f"    Std Dev (σ₀):        {float(results.sigma_calm):.4f}")
-    lines.append(f"    Expected Duration:   {'∞' if np.isinf(dur_calm) else f'{dur_calm:.1f}'} weeks")
+    lines.append(f"    Mean (μ₀):           {results.mu_calm:.4f}")
+    lines.append(f"    Std Dev (σ₀):        {results.sigma_calm:.4f}")
+    lines.append(f"    Expected Duration:   {dur_calm_str} weeks")
 
     lines.append("\n  CRISIS REGIME (S=1):")
-    lines.append(f"    Mean (μ₁):           {float(results.mu_crisis):.4f}")
-    lines.append(f"    Std Dev (σ₁):        {float(results.sigma_crisis):.4f}")
-    lines.append(f"    Expected Duration:   {'∞' if np.isinf(dur_crisis) else f'{dur_crisis:.1f}'} weeks")
+    lines.append(f"    Mean (μ₁):           {results.mu_crisis:.4f}")
+    lines.append(f"    Std Dev (σ₁):        {results.sigma_crisis:.4f}")
+    lines.append(f"    Expected Duration:   {dur_crisis_str} weeks")
 
     # Transition matrix
     lines.append("\n" + "=" * 70)
@@ -724,22 +733,22 @@ def generate_regime_report(fsi: pd.Series, results: RegimeResults,
     lines.append("\n" + "=" * 70)
     lines.append("6. INTERPRETATION")
     lines.append("=" * 70)
-    # Format durations with proper Python floats
-    dur_calm_str = '∞' if np.isinf(dur_calm) else f'{dur_calm:.0f}'
-    dur_crisis_str = '∞' if np.isinf(dur_crisis) else f'{dur_crisis:.0f}'
+    # Format durations for interpretation section
+    dur_calm_int = '∞' if dur_calm == float('inf') else f'{dur_calm:.0f}'
+    dur_crisis_int = '∞' if dur_crisis == float('inf') else f'{dur_crisis:.0f}'
 
     lines.append(f"""
     The Markov Switching Model identifies two distinct regimes:
 
     1. CALM REGIME:
-       - Mean FSI: {float(results.mu_calm):.3f} (lower stress)
-       - Volatility: {float(results.sigma_calm):.3f}
-       - Tends to persist for ~{dur_calm_str} weeks on average
+       - Mean FSI: {results.mu_calm:.3f} (lower stress)
+       - Volatility: {results.sigma_calm:.3f}
+       - Tends to persist for ~{dur_calm_int} weeks on average
 
     2. CRISIS REGIME:
-       - Mean FSI: {float(results.mu_crisis):.3f} (higher stress)
-       - Volatility: {float(results.sigma_crisis):.3f}
-       - Tends to persist for ~{dur_crisis_str} weeks on average
+       - Mean FSI: {results.mu_crisis:.3f} (higher stress)
+       - Volatility: {results.sigma_crisis:.3f}
+       - Tends to persist for ~{dur_crisis_int} weeks on average
 
     The smoothed probabilities provide the optimal estimate of being in each
     regime at each point in time, conditioning on all available data.
@@ -846,15 +855,14 @@ def main():
     print("\n" + "-" * 40)
     print("Regime Parameters:")
     print("-" * 40)
-    print(f"  Calm Regime:   μ = {float(results.mu_calm):.3f}, σ = {float(results.sigma_calm):.3f}")
-    print(f"  Crisis Regime: μ = {float(results.mu_crisis):.3f}, σ = {float(results.sigma_crisis):.3f}")
-    # Convert to Python float to avoid numpy array formatting issues
-    dur_calm = float(results.duration_calm) if np.isfinite(results.duration_calm) else float('inf')
-    dur_crisis = float(results.duration_crisis) if np.isfinite(results.duration_crisis) else float('inf')
-    if np.isinf(dur_calm) or np.isinf(dur_crisis):
-        print(f"  Expected durations: Calm = {'∞' if np.isinf(dur_calm) else f'{dur_calm:.1f}'} weeks, Crisis = {'∞' if np.isinf(dur_crisis) else f'{dur_crisis:.1f}'} weeks")
-    else:
-        print(f"  Expected durations: Calm = {dur_calm:.1f} weeks, Crisis = {dur_crisis:.1f} weeks")
+    print(f"  Calm Regime:   μ = {results.mu_calm:.3f}, σ = {results.sigma_calm:.3f}")
+    print(f"  Crisis Regime: μ = {results.mu_crisis:.3f}, σ = {results.sigma_crisis:.3f}")
+    # Duration values are already Python floats from get_results()
+    dur_calm = results.duration_calm
+    dur_crisis = results.duration_crisis
+    dur_calm_str = '∞' if dur_calm == float('inf') else f'{dur_calm:.1f}'
+    dur_crisis_str = '∞' if dur_crisis == float('inf') else f'{dur_crisis:.1f}'
+    print(f"  Expected durations: Calm = {dur_calm_str} weeks, Crisis = {dur_crisis_str} weeks")
 
     # Identify crisis periods
     print("\nIdentifying crisis periods...")

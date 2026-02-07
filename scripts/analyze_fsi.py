@@ -444,25 +444,45 @@ def calculate_rolling_correlation(fsi_df: pd.DataFrame, ibov_df: pd.DataFrame,
     # Aggregate IBOV to weekly
     ibov = ibov_df.copy()
     ibov['week'] = ibov['date'].dt.to_period('W').dt.start_time
-    vol_cols = [c for c in ibov.columns if 'vol' in c.lower()]
+
+    # Prefer realized volatility columns over 'volume'
+    vol_cols = [c for c in ibov.columns if 'realized_vol' in c.lower() or 'volatility' in c.lower()]
+    if not vol_cols:
+        # Fallback to any column with 'vol' but exclude 'volume'
+        vol_cols = [c for c in ibov.columns if 'vol' in c.lower() and c.lower() != 'volume']
+    if not vol_cols:
+        # Last resort: use 'volume'
+        vol_cols = [c for c in ibov.columns if 'vol' in c.lower()]
 
     if not vol_cols:
         return pd.DataFrame()
 
-    vol_col = vol_cols[0]
+    # Prefer 21-day realized volatility if available
+    vol_col = next((c for c in vol_cols if '21' in c), vol_cols[0])
     vol_weekly = ibov.groupby('week')[vol_col].mean().reset_index()
     vol_weekly.columns = ['date', 'volatility']
 
-    # Merge with FSI
-    merged = fsi_df.merge(vol_weekly, on='date', how='inner')
+    # Merge with FSI - use outer join to keep all dates, then handle NaN
+    merged = fsi_df.merge(vol_weekly, on='date', how='outer')
+    merged = merged.sort_values('date')
     merged = merged.set_index('date')
+
+    # Interpolate volatility to fill small gaps (up to 4 weeks)
+    merged['volatility'] = merged['volatility'].interpolate(method='linear', limit=4)
 
     fsi_cols = [c for c in merged.columns if 'fsi' in c.lower()]
 
-    # Calculate rolling correlation
+    # Calculate rolling correlation with min_periods to handle sparse data
     rolling_corr = pd.DataFrame(index=merged.index)
+    min_periods = max(window // 2, 26)  # At least 26 weeks or half the window
     for col in fsi_cols:
-        rolling_corr[col] = merged[col].rolling(window).corr(merged['volatility'])
+        # Only calculate where both FSI and volatility have data
+        valid_mask = merged[col].notna() & merged['volatility'].notna()
+        if valid_mask.sum() >= min_periods:
+            rolling_corr[col] = merged[col].rolling(window, min_periods=min_periods).corr(merged['volatility'])
+
+    # Drop rows where all correlations are NaN
+    rolling_corr = rolling_corr.dropna(how='all')
 
     return rolling_corr.reset_index()
 
