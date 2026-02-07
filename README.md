@@ -2,26 +2,38 @@
 
 Multiple complementary Financial Stress Indices for Brazil using Google Trends, LASSO regression, and news sentiment analysis.
 
+**All FSI outputs are scaled 0-1 where:**
+- **0** = No/minimum financial stress
+- **1** = Maximum financial stress
+- **0.5** = Neutral/average stress level
+
 ## Methods
 
 ### 1. Dictionary-Based FSI (Da et al. 2011)
 - Pre-defined stress queries with tier-based weights
 - 25 queries in 5 tiers
 - Weighted aggregation of Google Trends SVI
+- Output: 0-1 scale
 
 ### 2. ML-Generated FSI (García et al. 2023)
 - LASSO regression learns which queries predict market declines
 - ~100 queries with automatic feature selection
-- FSI = negative of predicted return
+- FSI = negative of predicted return (normalized to 0-1)
+- Handles large datasets with batch processing
+- Output: 0-1 scale
 
 ### 3. News-Based FSI (Baker et al. 2019 style)
 - Scrapes news from G1, Valor Econômico, Folha de S. Paulo
-- Three-way co-occurrence of financial + stress + negative terms
-- Aggregates article-level stress to weekly index
+- **Two-way co-occurrence**: financial + (stress OR negative) terms
+- More inclusive than three-way co-occurrence
+- Weighted scoring: stress terms count 2× more than negative terms
+- Output: 0-1 scale
 
 ### 4. Combined FSI
 - Combines all methodologies using weighted average, PCA, or dynamic weights
 - Validates against IBOVESPA realized volatility
+- All components normalized to 0-1 before combining
+- Output: 0-1 scale
 
 ## Quick Start
 
@@ -38,7 +50,7 @@ python scripts/collect_data.py --ml
 python scripts/ml_fsi.py
 
 # === NEWS-BASED FSI ===
-python scripts/collect_news.py
+python scripts/collect_news.py --start-year 2002 --end-year 2025
 python scripts/news_fsi.py
 
 # === COMBINED FSI ===
@@ -73,22 +85,22 @@ python scripts/collect_data.py
 python scripts/collect_data.py --ml
 
 # Custom date range
-python scripts/collect_data.py --start-date 2015-01-01 --end-date 2025-12-31
+python scripts/collect_data.py --start-date 2002-01-01 --end-date 2025-12-31
 ```
 
 ### News Data
 ```bash
-# All sources
-python scripts/collect_news.py
+# All sources (G1, Valor, Folha)
+python scripts/collect_news.py --start-year 2002 --end-year 2025
 
-# Specific source
-python scripts/collect_news.py --source g1
-python scripts/collect_news.py --source valor
-python scripts/collect_news.py --source folha
+# Folha only (fastest, no Selenium required)
+python scripts/collect_news.py --folha-only
 
-# Search with keywords
-python scripts/collect_news.py --keywords "crise,inflação" --pages 10
+# Skip Selenium (Folha only)
+python scripts/collect_news.py --no-selenium
 ```
+
+**Note**: G1 and Valor require Selenium for JavaScript-rendered pages. Folha works with regular HTTP requests.
 
 ## FSI Calculation
 
@@ -107,7 +119,7 @@ python scripts/ml_fsi.py --train-end 2020-12-31
 ### News-Based
 ```bash
 python scripts/news_fsi.py
-python scripts/news_fsi.py --scrape --pages 10
+python scripts/news_fsi.py --data path/to/news.csv
 ```
 
 ### Combined
@@ -120,9 +132,21 @@ python scripts/combined_fsi.py --method dynamic
 
 ## Methodology
 
+### FSI Scale (0-1)
+
+All FSI outputs use a normalized 0-1 scale:
+```
+0.0 = Minimum/no financial stress
+0.5 = Neutral/average stress level
+1.0 = Maximum financial stress
+```
+
+This allows direct comparison between different FSI methodologies.
+
 ### Dictionary FSI (Da et al. 2011)
 ```
-FSI = weighted_average(SVI × tier_weight)
+FSI_raw = weighted_average(SVI × tier_weight)
+FSI = min-max_normalize(FSI_raw) → [0, 1]
 
 Tier 1 (Crisis):   1.5x weight
 Tier 2 (Market):   1.2x weight
@@ -133,7 +157,8 @@ Tier 3-5:          1.0x weight
 ```
 Step 1: r_{t+1} = γ₀ + Σ φ_k × SVI_{k,t}
 Step 2: LASSO (L1 penalty) selects predictive queries
-Step 3: FSI = -predicted_return
+Step 3: FSI_raw = -predicted_return
+Step 4: FSI = min-max_normalize(FSI_raw) → [0, 1]
 ```
 
 ### News FSI (Baker et al. 2019 style)
@@ -142,27 +167,29 @@ For each article:
   1. Count financial terms (mercado, bolsa, etc.)
   2. Count stress terms (crise, pânico, etc.)
   3. Count negative terms (queda, perda, etc.)
-  4. Article has co-occurrence if all three > 0
+  4. TWO-WAY co-occurrence: financial + (stress OR negative)
+  5. Weighted score = (stress × 2) + negative
 
-FSI = aggregate(stress_scores) per week
+FSI_raw = aggregate(stress_scores) per week
+FSI = min-max_normalize(FSI_raw) → [0, 1]
 ```
 
 ### Combined FSI
 ```
-Method 1: Simple average of standardized FSIs
+Method 1: Simple average of normalized FSIs
 Method 2: Weighted average (Dict: 40%, ML: 35%, News: 25%)
-Method 3: PCA first principal component
+Method 3: PCA first principal component (normalized to 0-1)
 Method 4: Dynamic weights based on rolling correlation with volatility
 ```
 
 ## Output Files
 
-| Script | Output |
-|--------|--------|
-| `run_fsi.py` | `output/results/fsi_weekly.csv`, `fsi_monthly.csv` |
-| `ml_fsi.py` | `output/ml_fsi_weekly.csv`, `ml_coefficients.csv` |
-| `news_fsi.py` | `output/news_fsi_weekly.csv`, `news_fsi_articles.csv` |
-| `combined_fsi.py` | `output/combined_fsi.csv` |
+| Script | Output | Scale |
+|--------|--------|-------|
+| `run_fsi.py` | `output/results/fsi_weekly.csv` | 0-1 |
+| `ml_fsi.py` | `output/ml_fsi_weekly.csv` | 0-1 |
+| `news_fsi.py` | `output/news_fsi_weekly.csv` | 0-1 |
+| `combined_fsi.py` | `output/combined_fsi.csv` | 0-1 |
 
 ## Query Categories
 
@@ -184,6 +211,12 @@ Method 4: Dynamic weights based on rolling correlation with volatility
 | Financial | ~270 | mercado, bolsa, ibovespa, ações |
 | Stress | ~160 | crise, pânico, risco, instabilidade |
 | Negative | ~440 | queda, perda, prejuízo, falência |
+
+## Performance Notes
+
+- **Large datasets**: ML FSI uses batch processing for datasets with >10,000 samples
+- **News scraping**: Folha is fastest (HTTP only); G1/Valor require Selenium
+- **Memory**: For very large news datasets, FSI calculation is optimized with efficient pandas operations
 
 ## References
 

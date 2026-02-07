@@ -135,16 +135,24 @@ def calculate_fsi(gt_df: pd.DataFrame, method: str = 'weighted_average') -> pd.D
 
 
 def standardize_fsi(fsi_series: pd.Series) -> pd.Series:
-    """Standardize FSI to target mean (100)."""
+    """
+    Standardize FSI to 0-1 scale using min-max normalization.
+
+    0 = minimum/no stress, 1 = maximum stress
+    """
     valid = fsi_series.dropna()
     if len(valid) == 0:
         return fsi_series
 
-    mean, std = valid.mean(), valid.std()
-    if std == 0:
-        return pd.Series(CONFIG.TARGET_MEAN, index=fsi_series.index)
+    fsi_min = valid.min()
+    fsi_max = valid.max()
 
-    return (fsi_series - mean) / std * std + CONFIG.TARGET_MEAN
+    if fsi_max == fsi_min:
+        return pd.Series(0.5, index=fsi_series.index)
+
+    # Min-max normalization to 0-1
+    normalized = (fsi_series - fsi_min) / (fsi_max - fsi_min)
+    return normalized.clip(0, 1)
 
 
 def calculate_monthly_fsi(weekly_df: pd.DataFrame) -> pd.DataFrame:
@@ -255,7 +263,7 @@ def print_validation(results: Dict):
 # =============================================================================
 
 def plot_fsi_timeseries(weekly_fsi: pd.DataFrame, save_path: str = None):
-    """Plot FSI time series with crisis markers."""
+    """Plot FSI time series with crisis markers (0-1 scale)."""
     fig, ax = plt.subplots(figsize=(14, 6))
 
     ax.plot(weekly_fsi['date'], weekly_fsi['fsi'], color='#2E86AB', linewidth=1.5, label='FSI')
@@ -265,16 +273,26 @@ def plot_fsi_timeseries(weekly_fsi: pd.DataFrame, save_path: str = None):
         ax.plot(weekly_fsi['date'], rolling, color='#E94F37', linewidth=2,
                 label=f'{CONFIG.SMOOTHING_WINDOW}-week MA', alpha=0.8)
 
+    # Neutral line at 0.5
+    ax.axhline(y=0.5, color='gray', linestyle='--', alpha=0.5, label='Neutral (0.5)')
+
+    # Fill areas above/below neutral
+    ax.fill_between(weekly_fsi['date'], 0.5, weekly_fsi['fsi'],
+                    where=weekly_fsi['fsi'] > 0.5, alpha=0.3, color='red')
+    ax.fill_between(weekly_fsi['date'], 0.5, weekly_fsi['fsi'],
+                    where=weekly_fsi['fsi'] <= 0.5, alpha=0.3, color='green')
+
     for (start, end), label in CRISIS_EPISODES.items():
         start_dt, end_dt = pd.to_datetime(start), pd.to_datetime(end)
         if weekly_fsi['date'].min() <= end_dt and weekly_fsi['date'].max() >= start_dt:
             ax.axvspan(start_dt, end_dt, alpha=0.15, color='red')
             mid = start_dt + (end_dt - start_dt) / 2
-            ax.text(mid, ax.get_ylim()[1] * 0.97, label, ha='center', va='top', fontsize=7, rotation=45)
+            ax.text(mid, 0.95, label, ha='center', va='top', fontsize=7, rotation=45)
 
     ax.set_xlabel('Date', fontsize=11)
-    ax.set_ylabel('FSI', fontsize=11)
-    ax.set_title('Financial Stress Index - Brazil (Google Trends)', fontsize=13, fontweight='bold')
+    ax.set_ylabel('FSI (0-1 scale)', fontsize=11)
+    ax.set_ylim(0, 1)
+    ax.set_title('Financial Stress Index - Brazil (Google Trends)\n0=No Stress, 1=Maximum Stress', fontsize=13, fontweight='bold')
     ax.legend(loc='upper left')
     ax.xaxis.set_major_locator(mdates.YearLocator())
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
@@ -287,7 +305,7 @@ def plot_fsi_timeseries(weekly_fsi: pd.DataFrame, save_path: str = None):
 
 
 def plot_fsi_vs_volatility(weekly_fsi: pd.DataFrame, market_data: pd.DataFrame, save_path: str = None):
-    """Plot FSI vs market volatility."""
+    """Plot FSI vs market volatility (FSI on 0-1 scale)."""
     market = market_data.copy()
     market['week'] = pd.to_datetime(market['date']).dt.to_period('W')
     market_weekly = market.groupby('week')[CONFIG.VOLATILITY_COLUMN].mean().reset_index()
@@ -299,7 +317,8 @@ def plot_fsi_vs_volatility(weekly_fsi: pd.DataFrame, market_data: pd.DataFrame, 
 
     ax1.plot(merged['date'], merged['fsi'], color='#2E86AB', linewidth=1.5, label='FSI')
     ax1.set_xlabel('Date', fontsize=11)
-    ax1.set_ylabel('FSI', color='#2E86AB', fontsize=11)
+    ax1.set_ylabel('FSI (0-1 scale)', color='#2E86AB', fontsize=11)
+    ax1.set_ylim(0, 1)
     ax1.tick_params(axis='y', labelcolor='#2E86AB')
 
     ax2 = ax1.twinx()

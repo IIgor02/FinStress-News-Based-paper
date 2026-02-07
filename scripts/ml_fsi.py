@@ -286,11 +286,25 @@ def calculate_ml_fsi(X: pd.DataFrame, model, scaler) -> pd.Series:
     """
     Calculate ML-based Financial Stress Index.
 
-    FSI = -predicted_return
+    FSI = -predicted_return (normalized to 0-1 scale)
     High FSI = predicted market decline = high stress
+    0 = minimum stress, 1 = maximum stress
     """
-    X_scaled = scaler.transform(X)
-    predicted_returns = model.predict(X_scaled)
+    # Handle large datasets in batches
+    batch_size = 10000
+    n_samples = len(X)
+
+    if n_samples > batch_size:
+        print(f"    Processing {n_samples} samples in batches...")
+        predictions = []
+        for i in range(0, n_samples, batch_size):
+            batch = X.iloc[i:i+batch_size]
+            X_scaled = scaler.transform(batch)
+            predictions.extend(model.predict(X_scaled))
+        predicted_returns = np.array(predictions)
+    else:
+        X_scaled = scaler.transform(X)
+        predicted_returns = model.predict(X_scaled)
 
     # FSI = negative of predicted returns
     fsi_raw = -predicted_returns
@@ -300,8 +314,10 @@ def calculate_ml_fsi(X: pd.DataFrame, model, scaler) -> pd.Series:
 
 def standardize_fsi(fsi: pd.Series, vol: pd.Series) -> pd.Series:
     """
-    Standardize FSI to match volatility scale (mean=100).
+    Standardize FSI to 0-1 scale.
     Ensures positive correlation with volatility.
+
+    0 = minimum/no stress, 1 = maximum stress
     """
     # Align indices
     common = fsi.index.intersection(vol.index)
@@ -311,17 +327,22 @@ def standardize_fsi(fsi: pd.Series, vol: pd.Series) -> pd.Series:
     # Check correlation sign - if negative, flip FSI
     corr = fsi_aligned.corr(vol_aligned)
     if corr < 0:
-        fsi_aligned = -fsi_aligned
-
-    # Standardize to mean=100, match volatility std
-    fsi_std = 100 + (vol_aligned.std() / fsi_aligned.std()) * (fsi_aligned - fsi_aligned.mean())
-
-    # Return full series with same transformation
-    if corr < 0:
+        print(f"    Flipping FSI sign (correlation was {corr:.3f})")
         fsi = -fsi
-    fsi_full = 100 + (vol_aligned.std() / fsi.std()) * (fsi - fsi.mean())
 
-    return fsi_full
+    # Normalize to 0-1 scale using min-max normalization
+    fsi_min = fsi.min()
+    fsi_max = fsi.max()
+
+    if fsi_max > fsi_min:
+        fsi_normalized = (fsi - fsi_min) / (fsi_max - fsi_min)
+    else:
+        fsi_normalized = pd.Series(0.5, index=fsi.index)
+
+    # Ensure bounded [0, 1]
+    fsi_normalized = fsi_normalized.clip(0, 1)
+
+    return fsi_normalized
 
 
 # =============================================================================
@@ -370,7 +391,7 @@ def print_validation(results: Dict, is_test: bool = False):
 # =============================================================================
 
 def plot_fsi_timeseries(fsi: pd.Series, save_path: str = None):
-    """Plot ML FSI time series."""
+    """Plot ML FSI time series (0-1 scale)."""
     fig, ax = plt.subplots(figsize=(14, 6))
 
     dates = fsi.index.to_timestamp()
@@ -380,6 +401,15 @@ def plot_fsi_timeseries(fsi: pd.Series, save_path: str = None):
     rolling = fsi.rolling(4).mean()
     ax.plot(dates, rolling.values, color='#E94F37', linewidth=2, label='4-week MA', alpha=0.8)
 
+    # Neutral line at 0.5
+    ax.axhline(y=0.5, color='gray', linestyle='--', alpha=0.5, label='Neutral (0.5)')
+
+    # Fill areas above/below neutral
+    ax.fill_between(dates, 0.5, fsi.values,
+                    where=fsi.values > 0.5, alpha=0.3, color='red')
+    ax.fill_between(dates, 0.5, fsi.values,
+                    where=fsi.values <= 0.5, alpha=0.3, color='green')
+
     # Crisis markers
     for (start, end), label in CRISIS_EPISODES.items():
         start_dt, end_dt = pd.to_datetime(start), pd.to_datetime(end)
@@ -387,8 +417,9 @@ def plot_fsi_timeseries(fsi: pd.Series, save_path: str = None):
             ax.axvspan(start_dt, end_dt, alpha=0.15, color='red')
 
     ax.set_xlabel('Date', fontsize=11)
-    ax.set_ylabel('FSI', fontsize=11)
-    ax.set_title('ML-Generated Financial Stress Index (García et al. 2023)', fontsize=13, fontweight='bold')
+    ax.set_ylabel('FSI (0-1 scale)', fontsize=11)
+    ax.set_ylim(0, 1)
+    ax.set_title('ML-Generated Financial Stress Index (García et al. 2023)\n0=No Stress, 1=Maximum Stress', fontsize=13, fontweight='bold')
     ax.legend(loc='upper left')
     ax.xaxis.set_major_locator(mdates.YearLocator())
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
@@ -401,7 +432,7 @@ def plot_fsi_timeseries(fsi: pd.Series, save_path: str = None):
 
 
 def plot_fsi_vs_volatility(fsi: pd.Series, vol: pd.Series, save_path: str = None):
-    """Plot FSI vs volatility."""
+    """Plot FSI vs volatility (FSI on 0-1 scale)."""
     common = fsi.index.intersection(vol.index)
     fsi_aligned = fsi.loc[common]
     vol_aligned = vol.loc[common]
@@ -411,7 +442,8 @@ def plot_fsi_vs_volatility(fsi: pd.Series, vol: pd.Series, save_path: str = None
 
     ax1.plot(dates, fsi_aligned.values, color='#2E86AB', linewidth=1.5, label='ML FSI')
     ax1.set_xlabel('Date', fontsize=11)
-    ax1.set_ylabel('FSI', color='#2E86AB', fontsize=11)
+    ax1.set_ylabel('FSI (0-1 scale)', color='#2E86AB', fontsize=11)
+    ax1.set_ylim(0, 1)
     ax1.tick_params(axis='y', labelcolor='#2E86AB')
 
     ax2 = ax1.twinx()
@@ -593,13 +625,18 @@ def main():
     print("\nSaving results...")
     CONFIG.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # FSI weekly
+    # Also save to output root for combined_fsi.py compatibility
+    output_root = _PROJECT_DIR / 'output'
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    # FSI weekly (save to both locations for compatibility)
     fsi_df = pd.DataFrame({
         'date': fsi.index.to_timestamp(),
-        'fsi_ml': fsi.values
+        'ml_fsi': fsi.values  # Renamed for consistency with other FSI outputs
     })
     fsi_df.to_csv(CONFIG.OUTPUT_DIR / 'fsi_ml_weekly.csv', index=False)
-    print(f"  Saved: fsi_ml_weekly.csv")
+    fsi_df.to_csv(output_root / 'ml_fsi_weekly.csv', index=False)  # For combined_fsi.py
+    print(f"  Saved: fsi_ml_weekly.csv and ml_fsi_weekly.csv")
 
     # Coefficients
     coef_df.to_csv(CONFIG.OUTPUT_DIR / 'ml_coefficients.csv', index=False)
