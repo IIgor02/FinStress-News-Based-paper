@@ -44,6 +44,9 @@ data/processed/*.json
 !data/processed/.gitkeep
 
 # Output files (regenerated on run)
+output/*.csv
+output/*.png
+output/*.txt
 output/results/*.csv
 output/results/*.json
 output/plots/*.png
