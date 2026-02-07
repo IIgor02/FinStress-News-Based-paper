@@ -51,8 +51,36 @@ from scripts.dictionaries import (
 )
 
 warnings.filterwarnings('ignore')
-plt.style.use('seaborn-v0_8-whitegrid')
-sns.set_palette("husl")
+
+# Professional plot configuration
+plt.rcParams.update({
+    'font.family': 'serif',
+    'font.serif': ['Times New Roman', 'DejaVu Serif', 'Liberation Serif', 'serif'],
+    'font.size': 10,
+    'axes.labelsize': 11,
+    'axes.titlesize': 12,
+    'xtick.labelsize': 9,
+    'ytick.labelsize': 9,
+    'legend.fontsize': 9,
+    'figure.dpi': 150,
+    'savefig.dpi': 300,
+    'axes.linewidth': 0.8,
+    'grid.linewidth': 0.5,
+    'lines.linewidth': 1.2,
+    'axes.grid': True,
+    'grid.alpha': 0.3,
+})
+
+# Professional color palette (softer academic colors)
+COLORS = {
+    'fsi': '#4472C4',           # Soft blue
+    'fsi_ma': '#C55A11',        # Soft orange
+    'volatility': '#C55A11',    # Soft orange
+    'high_stress': '#E8C1C1',   # Light red for fill
+    'low_stress': '#C1E8C1',    # Light green for fill
+    'neutral': '#808080',       # Gray
+    'crisis': '#D9534F',        # Soft red
+}
 
 
 # =============================================================================
@@ -266,40 +294,47 @@ def plot_fsi_timeseries(weekly_fsi: pd.DataFrame, save_path: str = None):
     """Plot FSI time series with crisis markers (0-1 scale)."""
     fig, ax = plt.subplots(figsize=(14, 6))
 
-    ax.plot(weekly_fsi['date'], weekly_fsi['fsi'], color='#2E86AB', linewidth=1.5, label='FSI')
+    ax.plot(weekly_fsi['date'], weekly_fsi['fsi'], color=COLORS['fsi'], linewidth=1.5, label='FSI')
 
     if len(weekly_fsi) > CONFIG.SMOOTHING_WINDOW:
         rolling = weekly_fsi['fsi'].rolling(window=CONFIG.SMOOTHING_WINDOW, center=True).mean()
-        ax.plot(weekly_fsi['date'], rolling, color='#E94F37', linewidth=2,
+        ax.plot(weekly_fsi['date'], rolling, color=COLORS['fsi_ma'], linewidth=2,
                 label=f'{CONFIG.SMOOTHING_WINDOW}-week MA', alpha=0.8)
 
     # Neutral line at 0.5
-    ax.axhline(y=0.5, color='gray', linestyle='--', alpha=0.5, label='Neutral (0.5)')
+    ax.axhline(y=0.5, color=COLORS['neutral'], linestyle='--', alpha=0.5, label='Neutral (0.5)')
 
-    # Fill areas above/below neutral
+    # Fill areas above/below neutral (softer colors)
     ax.fill_between(weekly_fsi['date'], 0.5, weekly_fsi['fsi'],
-                    where=weekly_fsi['fsi'] > 0.5, alpha=0.3, color='red')
+                    where=weekly_fsi['fsi'] > 0.5, alpha=0.25, color=COLORS['high_stress'])
     ax.fill_between(weekly_fsi['date'], 0.5, weekly_fsi['fsi'],
-                    where=weekly_fsi['fsi'] <= 0.5, alpha=0.3, color='green')
+                    where=weekly_fsi['fsi'] <= 0.5, alpha=0.25, color=COLORS['low_stress'])
 
+    # Crisis markers (softer shading)
     for (start, end), label in CRISIS_EPISODES.items():
         start_dt, end_dt = pd.to_datetime(start), pd.to_datetime(end)
         if weekly_fsi['date'].min() <= end_dt and weekly_fsi['date'].max() >= start_dt:
-            ax.axvspan(start_dt, end_dt, alpha=0.15, color='red')
+            ax.axvspan(start_dt, end_dt, alpha=0.08, color=COLORS['crisis'])
             mid = start_dt + (end_dt - start_dt) / 2
             ax.text(mid, 0.95, label, ha='center', va='top', fontsize=7, rotation=45)
 
-    ax.set_xlabel('Date', fontsize=11)
-    ax.set_ylabel('FSI (0-1 scale)', fontsize=11)
+    ax.set_xlabel('Date')
+    ax.set_ylabel('FSI (0-1 scale)')
     ax.set_ylim(0, 1)
-    ax.set_title('Financial Stress Index - Brazil (Google Trends)\n0=No Stress, 1=Maximum Stress', fontsize=13, fontweight='bold')
+    ax.set_title('Financial Stress Index - Brazil (Da et al. 2011)')
     ax.legend(loc='upper left')
-    ax.xaxis.set_major_locator(mdates.YearLocator())
+
+    # Improved time axis
+    date_range = (weekly_fsi['date'].max() - weekly_fsi['date'].min()).days / 365
+    if date_range > 10:
+        ax.xaxis.set_major_locator(mdates.YearLocator(2))
+    else:
+        ax.xaxis.set_major_locator(mdates.YearLocator(1))
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
 
     plt.tight_layout()
     if save_path:
-        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"  Saved: {save_path}")
     plt.close()
 
@@ -315,30 +350,35 @@ def plot_fsi_vs_volatility(weekly_fsi: pd.DataFrame, market_data: pd.DataFrame, 
 
     fig, ax1 = plt.subplots(figsize=(14, 6))
 
-    ax1.plot(merged['date'], merged['fsi'], color='#2E86AB', linewidth=1.5, label='FSI')
-    ax1.set_xlabel('Date', fontsize=11)
-    ax1.set_ylabel('FSI (0-1 scale)', color='#2E86AB', fontsize=11)
+    ax1.plot(merged['date'], merged['fsi'], color=COLORS['fsi'], linewidth=1.5, label='FSI')
+    ax1.set_xlabel('Date')
+    ax1.set_ylabel('FSI (0-1 scale)', color=COLORS['fsi'])
     ax1.set_ylim(0, 1)
-    ax1.tick_params(axis='y', labelcolor='#2E86AB')
+    ax1.tick_params(axis='y', labelcolor=COLORS['fsi'])
 
     ax2 = ax1.twinx()
-    ax2.plot(merged['date'], merged[CONFIG.VOLATILITY_COLUMN], color='#E94F37', linewidth=1.5, label='Volatility', alpha=0.7)
-    ax2.set_ylabel('Volatility (%)', color='#E94F37', fontsize=11)
-    ax2.tick_params(axis='y', labelcolor='#E94F37')
+    ax2.plot(merged['date'], merged[CONFIG.VOLATILITY_COLUMN], color=COLORS['volatility'], linewidth=1.5, label='Volatility', alpha=0.7)
+    ax2.set_ylabel('Volatility (%)', color=COLORS['volatility'])
+    ax2.tick_params(axis='y', labelcolor=COLORS['volatility'])
 
     corr = merged['fsi'].corr(merged[CONFIG.VOLATILITY_COLUMN])
-    ax1.set_title(f'FSI vs IBOVESPA Volatility (r = {corr:.3f})', fontsize=13, fontweight='bold')
+    ax1.set_title(f'Dictionary FSI vs IBOVESPA Volatility (r = {corr:.3f})')
 
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
     ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
 
-    ax1.xaxis.set_major_locator(mdates.YearLocator())
+    # Improved time axis
+    date_range = (merged['date'].max() - merged['date'].min()).days / 365
+    if date_range > 10:
+        ax1.xaxis.set_major_locator(mdates.YearLocator(2))
+    else:
+        ax1.xaxis.set_major_locator(mdates.YearLocator(1))
     ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
 
     fig.tight_layout()
     if save_path:
-        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"  Saved: {save_path}")
     plt.close()
 

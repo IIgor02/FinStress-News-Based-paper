@@ -34,8 +34,37 @@ try:
     import matplotlib.pyplot as plt
     import matplotlib.dates as mdates
     MATPLOTLIB_AVAILABLE = True
+
+    # Professional plot configuration
+    plt.rcParams.update({
+        'font.family': 'serif',
+        'font.serif': ['Times New Roman', 'DejaVu Serif', 'Liberation Serif', 'serif'],
+        'font.size': 10,
+        'axes.labelsize': 11,
+        'axes.titlesize': 12,
+        'xtick.labelsize': 9,
+        'ytick.labelsize': 9,
+        'legend.fontsize': 9,
+        'figure.dpi': 150,
+        'savefig.dpi': 300,
+        'axes.linewidth': 0.8,
+        'grid.linewidth': 0.5,
+        'lines.linewidth': 1.2,
+    })
 except ImportError:
     MATPLOTLIB_AVAILABLE = False
+
+# Professional color palette (softer academic colors)
+COLORS = {
+    'dict_fsi': '#4472C4',     # Soft blue
+    'ml_fsi': '#C55A11',       # Soft orange
+    'news_fsi': '#548235',     # Soft green
+    'combined': '#2F2F2F',     # Dark gray
+    'crisis': '#D9534F',       # Soft red
+    'neutral': '#808080',      # Gray
+    'high_stress': '#E8C1C1',  # Light red
+    'low_stress': '#C1E8C1',   # Light green
+}
 
 # Handle both script execution and interactive usage
 try:
@@ -80,18 +109,29 @@ def load_dictionary_fsi() -> Optional[pd.DataFrame]:
 
 def load_ml_fsi() -> Optional[pd.DataFrame]:
     """Load ML-based FSI from ml_fsi.py output."""
-    fsi_path = OUTPUT_DIR / 'ml_fsi_weekly.csv'
+    # Try multiple possible locations
+    possible_paths = [
+        OUTPUT_DIR / 'ml_fsi_weekly.csv',
+        OUTPUT_DIR / 'results' / 'fsi_ml_weekly.csv',
+        OUTPUT_DIR / 'results' / 'ml_fsi_weekly.csv',
+    ]
 
-    if fsi_path.exists():
-        df = pd.read_csv(fsi_path)
-        df['date'] = pd.to_datetime(df['date'])
-        if 'ml_fsi' in df.columns:
-            print(f"  ML FSI: {len(df)} weeks")
-            return df[['date', 'ml_fsi']]
-        elif 'fsi' in df.columns:
-            df = df.rename(columns={'fsi': 'ml_fsi'})
-            print(f"  ML FSI: {len(df)} weeks")
-            return df[['date', 'ml_fsi']]
+    for fsi_path in possible_paths:
+        if fsi_path.exists():
+            df = pd.read_csv(fsi_path)
+            df['date'] = pd.to_datetime(df['date'])
+            # Handle different column names
+            if 'ml_fsi' in df.columns:
+                print(f"  ML FSI: {len(df)} weeks (from {fsi_path.name})")
+                return df[['date', 'ml_fsi']]
+            elif 'fsi_ml' in df.columns:
+                df = df.rename(columns={'fsi_ml': 'ml_fsi'})
+                print(f"  ML FSI: {len(df)} weeks (from {fsi_path.name})")
+                return df[['date', 'ml_fsi']]
+            elif 'fsi' in df.columns:
+                df = df.rename(columns={'fsi': 'ml_fsi'})
+                print(f"  ML FSI: {len(df)} weeks (from {fsi_path.name})")
+                return df[['date', 'ml_fsi']]
 
     print("  ML FSI: Not found (run scripts/ml_fsi.py)")
     return None
@@ -350,7 +390,7 @@ def validate_combined_fsi(combined_df: pd.DataFrame, ibov_df: pd.DataFrame) -> D
 # =============================================================================
 
 def plot_combined_fsi(combined_df: pd.DataFrame, ibov_df: pd.DataFrame = None,
-                       output_path: Path = None) -> None:
+                       output_path: Path = None, method_name: str = 'combined') -> None:
     """Create visualization comparing all FSI series."""
     if not MATPLOTLIB_AVAILABLE:
         print("  WARNING: matplotlib not installed, skipping visualization")
@@ -364,7 +404,12 @@ def plot_combined_fsi(combined_df: pd.DataFrame, ibov_df: pd.DataFrame = None,
     if n_plots == 2:
         axes = list(axes)
 
-    colors = {'dict_fsi': '#2E86AB', 'ml_fsi': '#E94F37', 'news_fsi': '#4ECDC4'}
+    # Use professional color palette from COLORS dict
+    colors = {
+        'dict_fsi': COLORS['dict_fsi'],
+        'ml_fsi': COLORS['ml_fsi'],
+        'news_fsi': COLORS['news_fsi']
+    }
     labels = {'dict_fsi': 'Dictionary (Da et al.)', 'ml_fsi': 'ML (García et al.)', 'news_fsi': 'News (Baker et al.)'}
 
     # Plot 1: Individual FSI series (0-1 scale)
@@ -380,32 +425,33 @@ def plot_combined_fsi(combined_df: pd.DataFrame, ibov_df: pd.DataFrame = None,
     ax1.legend(loc='upper right')
     ax1.grid(True, alpha=0.3)
 
-    # Add crisis shading
+    # Add crisis shading (using softer color)
     for (start, end), label in CRISIS_EPISODES.items():
         start_dt, end_dt = pd.to_datetime(start), pd.to_datetime(end)
         if combined_df['date'].min() <= end_dt and combined_df['date'].max() >= start_dt:
-            ax1.axvspan(start_dt, end_dt, alpha=0.1, color='red')
+            ax1.axvspan(start_dt, end_dt, alpha=0.08, color=COLORS['crisis'])
 
     # Plot 2: Combined FSI (0-1 scale)
     ax2 = axes[1]
+    method_display = method_name.replace('_', ' ').title()
     ax2.plot(combined_df['date'], combined_df['combined_fsi'],
-             color='black', linewidth=2, label='Combined FSI')
+             color=COLORS['combined'], linewidth=2, label=f'Combined FSI ({method_display})')
     ax2.fill_between(combined_df['date'], 0.5, combined_df['combined_fsi'],
-                     where=combined_df['combined_fsi'] > 0.5, alpha=0.3, color='red')
+                     where=combined_df['combined_fsi'] > 0.5, alpha=0.25, color=COLORS['high_stress'])
     ax2.fill_between(combined_df['date'], 0.5, combined_df['combined_fsi'],
-                     where=combined_df['combined_fsi'] <= 0.5, alpha=0.3, color='green')
-    ax2.axhline(y=0.5, color='gray', linestyle='--', alpha=0.5)
+                     where=combined_df['combined_fsi'] <= 0.5, alpha=0.25, color=COLORS['low_stress'])
+    ax2.axhline(y=0.5, color=COLORS['neutral'], linestyle='--', alpha=0.5)
     ax2.set_ylabel('Combined FSI (0-1 scale)')
     ax2.set_ylim(0, 1)
-    ax2.set_title('Combined Financial Stress Index (0=No Stress, 1=Maximum Stress)')
+    ax2.set_title(f'Combined Financial Stress Index - {method_display} Method')
     ax2.legend(loc='upper right')
     ax2.grid(True, alpha=0.3)
 
-    # Add crisis shading
+    # Add crisis shading (using softer color)
     for (start, end), label in CRISIS_EPISODES.items():
         start_dt, end_dt = pd.to_datetime(start), pd.to_datetime(end)
         if combined_df['date'].min() <= end_dt and combined_df['date'].max() >= start_dt:
-            ax2.axvspan(start_dt, end_dt, alpha=0.1, color='red')
+            ax2.axvspan(start_dt, end_dt, alpha=0.08, color=COLORS['crisis'])
 
     # Plot 3: Comparison with volatility (if available)
     if ibov_df is not None and len(axes) > 2:
@@ -417,15 +463,15 @@ def plot_combined_fsi(combined_df: pd.DataFrame, ibov_df: pd.DataFrame = None,
 
         if 'realized_vol_21d' in ibov.columns:
             vol_weekly = ibov['realized_vol_21d'].resample('W').mean()
-            ax3.plot(vol_weekly.index, vol_weekly.values, color='orange',
+            ax3.plot(vol_weekly.index, vol_weekly.values, color=COLORS['ml_fsi'],
                      linewidth=1.5, label='IBOV Volatility (21d)', alpha=0.8)
 
         ax3_twin = ax3.twinx()
         ax3_twin.plot(combined_df['date'], combined_df['combined_fsi'],
-                      color='black', linewidth=1.5, alpha=0.7, label='Combined FSI')
-        ax3_twin.set_ylabel('Combined FSI', color='black')
+                      color=COLORS['combined'], linewidth=1.5, alpha=0.7, label='Combined FSI')
+        ax3_twin.set_ylabel('Combined FSI', color=COLORS['combined'])
 
-        ax3.set_ylabel('Volatility (%)', color='orange')
+        ax3.set_ylabel('Volatility (%)', color=COLORS['ml_fsi'])
         ax3.set_title('Combined FSI vs Market Volatility')
         ax3.grid(True, alpha=0.3)
 
@@ -434,10 +480,21 @@ def plot_combined_fsi(combined_df: pd.DataFrame, ibov_df: pd.DataFrame = None,
         lines2, labels2 = ax3_twin.get_legend_handles_labels()
         ax3.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
 
-    # Format x-axis
-    axes[-1].xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-    axes[-1].xaxis.set_major_locator(mdates.MonthLocator(interval=6))
-    plt.xticks(rotation=45)
+    # Format x-axis - show years only (cleaner for long time series)
+    date_range = (combined_df['date'].max() - combined_df['date'].min()).days / 365
+    if date_range > 10:
+        # For long time series (>10 years), show every 2 years
+        axes[-1].xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+        axes[-1].xaxis.set_major_locator(mdates.YearLocator(2))
+    elif date_range > 4:
+        # For medium time series (4-10 years), show every year
+        axes[-1].xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+        axes[-1].xaxis.set_major_locator(mdates.YearLocator(1))
+    else:
+        # For short time series (<4 years), show every 6 months
+        axes[-1].xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+        axes[-1].xaxis.set_major_locator(mdates.MonthLocator(interval=6))
+    plt.xticks(rotation=0)  # No rotation needed for year labels
 
     plt.tight_layout()
 
@@ -542,17 +599,24 @@ def main():
     print("Saving Results")
     print("-" * 40)
 
-    output_path = OUTPUT_DIR / 'combined_fsi.csv'
+    # Save both a generic and method-specific file
+    output_path = OUTPUT_DIR / f'combined_fsi_{args.method}.csv'
     combined_df.to_csv(output_path, index=False)
     print(f"  Saved: {output_path}")
+
+    # Also save as generic combined_fsi.csv for backwards compatibility
+    generic_path = OUTPUT_DIR / 'combined_fsi.csv'
+    combined_df.to_csv(generic_path, index=False)
+    print(f"  Saved: {generic_path}")
 
     # Visualization
     print("\n" + "-" * 40)
     print("Visualization")
     print("-" * 40)
 
-    plot_path = OUTPUT_DIR / 'combined_fsi_analysis.png'
-    plot_combined_fsi(combined_df, ibov_df, plot_path)
+    # Save with unique name based on method
+    plot_path = OUTPUT_DIR / f'combined_fsi_{args.method}.png'
+    plot_combined_fsi(combined_df, ibov_df, plot_path, method_name=args.method)
 
     # Summary
     print("\n" + "=" * 60)
@@ -560,7 +624,7 @@ def main():
     print("=" * 60)
 
     fsi_cols = [c for c in combined_df.columns if 'fsi' in c.lower()]
-    print(f"\n📊 Combined FSI Statistics:")
+    print(f"\n   Combined FSI Statistics ({args.method} method):")
     print(f"   Period: {combined_df['date'].min().date()} to {combined_df['date'].max().date()}")
     print(f"   Weeks: {len(combined_df)}")
 
@@ -572,8 +636,9 @@ def main():
         print(f"     Max:  {cfsi.max():.2f} ({combined_df.loc[cfsi.idxmax(), 'date'].date()})")
         print(f"     Min:  {cfsi.min():.2f} ({combined_df.loc[cfsi.idxmin(), 'date'].date()})")
 
-    print(f"\n📁 Output files:")
+    print(f"\n   Output files:")
     print(f"   - {output_path}")
+    print(f"   - {generic_path}")
     print(f"   - {plot_path}")
 
     print("=" * 60)

@@ -50,8 +50,38 @@ sys.path.insert(0, str(_PROJECT_DIR))
 from scripts.dictionaries import CRISIS_EPISODES, get_dictionary_stats
 
 warnings.filterwarnings('ignore')
-plt.style.use('seaborn-v0_8-whitegrid')
-sns.set_palette("husl")
+
+# Professional plot configuration
+plt.rcParams.update({
+    'font.family': 'serif',
+    'font.serif': ['Times New Roman', 'DejaVu Serif', 'Liberation Serif', 'serif'],
+    'font.size': 10,
+    'axes.labelsize': 11,
+    'axes.titlesize': 12,
+    'xtick.labelsize': 9,
+    'ytick.labelsize': 9,
+    'legend.fontsize': 9,
+    'figure.dpi': 150,
+    'savefig.dpi': 300,
+    'axes.linewidth': 0.8,
+    'grid.linewidth': 0.5,
+    'lines.linewidth': 1.2,
+    'axes.grid': True,
+    'grid.alpha': 0.3,
+})
+
+# Professional color palette (softer academic colors)
+COLORS = {
+    'fsi': '#4472C4',           # Soft blue
+    'fsi_ma': '#C55A11',        # Soft orange
+    'volatility': '#C55A11',    # Soft orange
+    'stress': '#D9534F',        # Soft red
+    'anti_stress': '#4472C4',   # Soft blue
+    'high_stress': '#E8C1C1',   # Light red for fill
+    'low_stress': '#C1E8C1',    # Light green for fill
+    'neutral': '#808080',       # Gray
+    'crisis': '#D9534F',        # Soft red
+}
 
 
 # =============================================================================
@@ -395,38 +425,44 @@ def plot_fsi_timeseries(fsi: pd.Series, save_path: str = None):
     fig, ax = plt.subplots(figsize=(14, 6))
 
     dates = fsi.index.to_timestamp()
-    ax.plot(dates, fsi.values, color='#2E86AB', linewidth=1.5, label='ML FSI')
+    ax.plot(dates, fsi.values, color=COLORS['fsi'], linewidth=1.5, label='ML FSI')
 
     # 4-week moving average
     rolling = fsi.rolling(4).mean()
-    ax.plot(dates, rolling.values, color='#E94F37', linewidth=2, label='4-week MA', alpha=0.8)
+    ax.plot(dates, rolling.values, color=COLORS['fsi_ma'], linewidth=2, label='4-week MA', alpha=0.8)
 
     # Neutral line at 0.5
-    ax.axhline(y=0.5, color='gray', linestyle='--', alpha=0.5, label='Neutral (0.5)')
+    ax.axhline(y=0.5, color=COLORS['neutral'], linestyle='--', alpha=0.5, label='Neutral (0.5)')
 
-    # Fill areas above/below neutral
+    # Fill areas above/below neutral (softer colors)
     ax.fill_between(dates, 0.5, fsi.values,
-                    where=fsi.values > 0.5, alpha=0.3, color='red')
+                    where=fsi.values > 0.5, alpha=0.25, color=COLORS['high_stress'])
     ax.fill_between(dates, 0.5, fsi.values,
-                    where=fsi.values <= 0.5, alpha=0.3, color='green')
+                    where=fsi.values <= 0.5, alpha=0.25, color=COLORS['low_stress'])
 
-    # Crisis markers
+    # Crisis markers (softer shading)
     for (start, end), label in CRISIS_EPISODES.items():
         start_dt, end_dt = pd.to_datetime(start), pd.to_datetime(end)
         if dates.min() <= end_dt and dates.max() >= start_dt:
-            ax.axvspan(start_dt, end_dt, alpha=0.15, color='red')
+            ax.axvspan(start_dt, end_dt, alpha=0.08, color=COLORS['crisis'])
 
-    ax.set_xlabel('Date', fontsize=11)
-    ax.set_ylabel('FSI (0-1 scale)', fontsize=11)
+    ax.set_xlabel('Date')
+    ax.set_ylabel('FSI (0-1 scale)')
     ax.set_ylim(0, 1)
-    ax.set_title('ML-Generated Financial Stress Index (García et al. 2023)\n0=No Stress, 1=Maximum Stress', fontsize=13, fontweight='bold')
+    ax.set_title('ML-Generated Financial Stress Index (García et al. 2023)')
     ax.legend(loc='upper left')
-    ax.xaxis.set_major_locator(mdates.YearLocator())
+
+    # Improved time axis - show years appropriately
+    date_range = (dates.max() - dates.min()).days / 365
+    if date_range > 10:
+        ax.xaxis.set_major_locator(mdates.YearLocator(2))
+    else:
+        ax.xaxis.set_major_locator(mdates.YearLocator(1))
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
 
     plt.tight_layout()
     if save_path:
-        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"  Saved: {save_path}")
     plt.close()
 
@@ -440,30 +476,35 @@ def plot_fsi_vs_volatility(fsi: pd.Series, vol: pd.Series, save_path: str = None
 
     fig, ax1 = plt.subplots(figsize=(14, 6))
 
-    ax1.plot(dates, fsi_aligned.values, color='#2E86AB', linewidth=1.5, label='ML FSI')
-    ax1.set_xlabel('Date', fontsize=11)
-    ax1.set_ylabel('FSI (0-1 scale)', color='#2E86AB', fontsize=11)
+    ax1.plot(dates, fsi_aligned.values, color=COLORS['fsi'], linewidth=1.5, label='ML FSI')
+    ax1.set_xlabel('Date')
+    ax1.set_ylabel('FSI (0-1 scale)', color=COLORS['fsi'])
     ax1.set_ylim(0, 1)
-    ax1.tick_params(axis='y', labelcolor='#2E86AB')
+    ax1.tick_params(axis='y', labelcolor=COLORS['fsi'])
 
     ax2 = ax1.twinx()
-    ax2.plot(dates, vol_aligned.values, color='#E94F37', linewidth=1.5, label='Volatility', alpha=0.7)
-    ax2.set_ylabel('Volatility (%)', color='#E94F37', fontsize=11)
-    ax2.tick_params(axis='y', labelcolor='#E94F37')
+    ax2.plot(dates, vol_aligned.values, color=COLORS['volatility'], linewidth=1.5, label='Volatility', alpha=0.7)
+    ax2.set_ylabel('Volatility (%)', color=COLORS['volatility'])
+    ax2.tick_params(axis='y', labelcolor=COLORS['volatility'])
 
     corr = fsi_aligned.corr(vol_aligned)
-    ax1.set_title(f'ML FSI vs IBOVESPA Volatility (r = {corr:.3f})', fontsize=13, fontweight='bold')
+    ax1.set_title(f'ML FSI vs IBOVESPA Volatility (r = {corr:.3f})')
 
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
     ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
 
-    ax1.xaxis.set_major_locator(mdates.YearLocator())
+    # Improved time axis
+    date_range = (dates.max() - dates.min()).days / 365
+    if date_range > 10:
+        ax1.xaxis.set_major_locator(mdates.YearLocator(2))
+    else:
+        ax1.xaxis.set_major_locator(mdates.YearLocator(1))
     ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
 
     plt.tight_layout()
     if save_path:
-        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"  Saved: {save_path}")
     plt.close()
 
@@ -481,16 +522,16 @@ def plot_top_queries(coef_df: pd.DataFrame, n_top: int = 20, save_path: str = No
 
     fig, ax = plt.subplots(figsize=(10, 8))
 
-    colors = ['#E94F37' if c < 0 else '#2E86AB' for c in top['coefficient']]
-    ax.barh(top['query'], top['coefficient'], color=colors)
+    colors = [COLORS['stress'] if c < 0 else COLORS['anti_stress'] for c in top['coefficient']]
+    ax.barh(top['query'], top['coefficient'], color=colors, edgecolor='white', linewidth=0.5)
 
     ax.axvline(x=0, color='black', linewidth=0.5)
-    ax.set_xlabel('Coefficient', fontsize=11)
-    ax.set_title('Top Predictive Queries\n(Red = Stress, Blue = Anti-stress)', fontsize=13, fontweight='bold')
+    ax.set_xlabel('Coefficient')
+    ax.set_title('Top Predictive Queries (Red = Stress, Blue = Anti-stress)')
 
     plt.tight_layout()
     if save_path:
-        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"  Saved: {save_path}")
     plt.close()
 
@@ -502,16 +543,16 @@ def plot_coefficient_distribution(coef_df: pd.DataFrame, save_path: str = None):
     coefs = coef_df['coefficient']
     nonzero = coefs[coefs != 0]
 
-    ax.hist(nonzero, bins=30, color='#2E86AB', edgecolor='white', alpha=0.7)
-    ax.axvline(x=0, color='red', linestyle='--', linewidth=2)
+    ax.hist(nonzero, bins=30, color=COLORS['fsi'], edgecolor='white', alpha=0.7)
+    ax.axvline(x=0, color=COLORS['stress'], linestyle='--', linewidth=2)
 
-    ax.set_xlabel('Coefficient Value', fontsize=11)
-    ax.set_ylabel('Count', fontsize=11)
-    ax.set_title(f'Distribution of LASSO Coefficients\n({len(nonzero)} non-zero out of {len(coefs)})', fontsize=13, fontweight='bold')
+    ax.set_xlabel('Coefficient Value')
+    ax.set_ylabel('Count')
+    ax.set_title(f'Distribution of LASSO Coefficients ({len(nonzero)} non-zero out of {len(coefs)})')
 
     plt.tight_layout()
     if save_path:
-        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"  Saved: {save_path}")
     plt.close()
 

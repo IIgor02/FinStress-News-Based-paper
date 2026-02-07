@@ -38,6 +38,42 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+
+# Professional plot configuration
+plt.rcParams.update({
+    'font.family': 'serif',
+    'font.serif': ['Times New Roman', 'DejaVu Serif', 'Liberation Serif', 'serif'],
+    'font.size': 10,
+    'axes.labelsize': 11,
+    'axes.titlesize': 12,
+    'xtick.labelsize': 9,
+    'ytick.labelsize': 9,
+    'legend.fontsize': 9,
+    'figure.dpi': 150,
+    'savefig.dpi': 300,
+    'axes.linewidth': 0.8,
+    'grid.linewidth': 0.5,
+    'lines.linewidth': 1.2,
+    'axes.grid': True,
+    'grid.alpha': 0.3,
+})
+
+# Professional color palette (softer academic colors)
+COLORS = {
+    'fsi': '#548235',           # Soft green (news FSI)
+    'volatility': '#C55A11',    # Soft orange
+    'high_stress': '#E8C1C1',   # Light red for fill
+    'low_stress': '#C1E8C1',    # Light green for fill
+    'neutral': '#808080',       # Gray
+    'total_articles': '#4472C4', # Soft blue
+    'stress_articles': '#D9534F', # Soft red
+    'crisis': '#D9534F',        # Soft red
+}
+
 # Handle both script execution and interactive usage
 try:
     _SCRIPT_DIR = Path(__file__).parent
@@ -289,38 +325,31 @@ def standardize_fsi(fsi_series: pd.Series, vol_series: pd.Series = None) -> pd.S
 def plot_news_fsi(weekly_df: pd.DataFrame, ibov_df: pd.DataFrame = None,
                    output_path: Path = None) -> None:
     """
-    Create visualization of news-based FSI.
+    Create visualization of news-based FSI with professional styling.
     """
-    try:
-        import matplotlib.pyplot as plt
-        import matplotlib.dates as mdates
-    except ImportError:
-        print("  WARNING: matplotlib not installed, skipping visualization")
-        return
-
     fig, axes = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
 
     # Plot 1: News FSI (0-1 scale)
     ax1 = axes[0]
-    ax1.plot(weekly_df['date'], weekly_df['news_fsi'], 'b-', linewidth=1.5, label='News FSI')
-    ax1.axhline(y=0.5, color='gray', linestyle='--', alpha=0.5, label='Neutral (0.5)')
+    ax1.plot(weekly_df['date'], weekly_df['news_fsi'], color=COLORS['fsi'], linewidth=1.5, label='News FSI')
+    ax1.axhline(y=0.5, color=COLORS['neutral'], linestyle='--', alpha=0.5, label='Neutral (0.5)')
     ax1.fill_between(weekly_df['date'], 0.5, weekly_df['news_fsi'],
-                     where=weekly_df['news_fsi'] > 0.5, alpha=0.3, color='red', label='High Stress')
+                     where=weekly_df['news_fsi'] > 0.5, alpha=0.25, color=COLORS['high_stress'], label='High Stress')
     ax1.fill_between(weekly_df['date'], 0.5, weekly_df['news_fsi'],
-                     where=weekly_df['news_fsi'] <= 0.5, alpha=0.3, color='green', label='Low Stress')
+                     where=weekly_df['news_fsi'] <= 0.5, alpha=0.25, color=COLORS['low_stress'], label='Low Stress')
     ax1.set_ylabel('News FSI (0-1 scale)')
     ax1.set_ylim(0, 1)
-    ax1.set_title('News-Based Financial Stress Index (Brazil) - 0=No Stress, 1=Maximum Stress')
+    ax1.set_title('News-Based Financial Stress Index (Baker et al. 2019 style)')
     ax1.legend(loc='upper right')
-    ax1.grid(True, alpha=0.3)
 
     # Plot 2: Article counts
     ax2 = axes[1]
-    ax2.bar(weekly_df['date'], weekly_df['article_count'], alpha=0.5, label='Total Articles', width=5)
-    ax2.bar(weekly_df['date'], weekly_df['stress_articles'], alpha=0.7, label='Stress Articles', width=5)
+    ax2.bar(weekly_df['date'], weekly_df['article_count'], alpha=0.5,
+            color=COLORS['total_articles'], label='Total Articles', width=5)
+    ax2.bar(weekly_df['date'], weekly_df['stress_articles'], alpha=0.7,
+            color=COLORS['stress_articles'], label='Stress Articles', width=5)
     ax2.set_ylabel('Article Count')
     ax2.legend(loc='upper right')
-    ax2.grid(True, alpha=0.3)
 
     # Plot 3: If IBOVESPA data available, show comparison
     if ibov_df is not None and not ibov_df.empty:
@@ -333,24 +362,32 @@ def plot_news_fsi(weekly_df: pd.DataFrame, ibov_df: pd.DataFrame = None,
 
         if 'realized_vol_21d' in ibov.columns:
             weekly_vol = ibov['realized_vol_21d'].resample('W').mean()
-            ax3.plot(weekly_vol.index, weekly_vol.values, 'orange', linewidth=1.5, label='IBOV Volatility (21d)')
+            ax3.plot(weekly_vol.index, weekly_vol.values, color=COLORS['volatility'],
+                     linewidth=1.5, label='IBOV Volatility (21d)')
             ax3.set_ylabel('Realized Volatility (%)')
             ax3.legend(loc='upper right')
-            ax3.grid(True, alpha=0.3)
     else:
         ax3 = axes[2]
         ax3.text(0.5, 0.5, 'IBOVESPA data not available',
                  ha='center', va='center', transform=ax3.transAxes, fontsize=12, color='gray')
         ax3.set_ylabel('Realized Volatility (%)')
 
-    ax3.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-    ax3.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
-    plt.xticks(rotation=45)
+    # Improved time axis - show years appropriately
+    date_range = (weekly_df['date'].max() - weekly_df['date'].min()).days / 365
+    if date_range > 10:
+        ax3.xaxis.set_major_locator(mdates.YearLocator(2))
+        ax3.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+    elif date_range > 4:
+        ax3.xaxis.set_major_locator(mdates.YearLocator(1))
+        ax3.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+    else:
+        ax3.xaxis.set_major_locator(mdates.MonthLocator(interval=6))
+        ax3.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
 
     plt.tight_layout()
 
     if output_path:
-        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
         print(f"  Saved plot to {output_path}")
     else:
         plt.show()
@@ -474,7 +511,7 @@ def main():
     print("NEWS FSI CALCULATION COMPLETE")
     print("=" * 60)
 
-    print(f"\n📊 FSI Statistics:")
+    print(f"\n   FSI Statistics:")
     print(f"   Period: {weekly_df['date'].min().date()} to {weekly_df['date'].max().date()}")
     print(f"   Weeks: {len(weekly_df)}")
     print(f"   Mean FSI: {weekly_df['news_fsi'].mean():.2f}")
@@ -491,7 +528,7 @@ def main():
             corr = fsi_for_corr.loc[common_idx].corr(ibov_weekly.loc[common_idx])
             print(f"\n   Correlation with IBOV volatility: {corr:.3f}")
 
-    print(f"\n📁 Output files:")
+    print(f"\n   Output files:")
     print(f"   - {article_path}")
     print(f"   - {weekly_path}")
     print(f"   - {plot_path}")
