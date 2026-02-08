@@ -467,12 +467,20 @@ def plot_combined_fsi(combined_df: pd.DataFrame, ibov_df: pd.DataFrame = None,
                      linewidth=1.5, label='IBOV Volatility (21d)', alpha=0.8)
 
         ax3_twin = ax3.twinx()
+
+        # Plot News FSI if available
+        if 'news_fsi' in combined_df.columns:
+            ax3_twin.plot(combined_df['date'], combined_df['news_fsi'],
+                          color=COLORS['news_fsi'], linewidth=1.2, alpha=0.6, label='News FSI')
+
+        # Plot Combined FSI
         ax3_twin.plot(combined_df['date'], combined_df['combined_fsi'],
                       color=COLORS['combined'], linewidth=1.5, alpha=0.7, label='Combined FSI')
-        ax3_twin.set_ylabel('Combined FSI', color=COLORS['combined'])
+        ax3_twin.set_ylabel('FSI (0-1 scale)', color=COLORS['combined'])
+        ax3_twin.set_ylim(0, 1)
 
         ax3.set_ylabel('Volatility (%)', color=COLORS['ml_fsi'])
-        ax3.set_title('Combined FSI vs Market Volatility')
+        ax3.set_title('FSI vs Market Volatility')
         ax3.grid(True, alpha=0.3)
 
         # Combine legends

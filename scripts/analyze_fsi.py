@@ -320,9 +320,29 @@ def apply_kalman_smoothing_to_fsi(fsi_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def merge_fsi_data(fsi_data: Dict[str, pd.DataFrame]) -> pd.DataFrame:
-    """Merge all FSI series into a single DataFrame."""
-    merged = None
+    """Merge all FSI series into a single DataFrame.
+
+    Handles potential date misalignment between sources by normalizing
+    to the same week period.
+    """
+    if not fsi_data:
+        return pd.DataFrame()
+
+    # Normalize all dates to week period start (Sunday) for consistent merging
+    normalized_data = {}
     for name, df in fsi_data.items():
+        df_copy = df.copy()
+        # Convert to week period and get start date
+        df_copy['week'] = df_copy['date'].dt.to_period('W').dt.start_time
+        # Group by week and take the mean (in case of duplicates)
+        fsi_col = [c for c in df_copy.columns if 'fsi' in c.lower() and c != 'date'][0]
+        weekly = df_copy.groupby('week')[fsi_col].mean().reset_index()
+        weekly.columns = ['date', fsi_col]
+        normalized_data[name] = weekly
+
+    # Now merge the normalized data
+    merged = None
+    for name, df in normalized_data.items():
         if merged is None:
             merged = df.copy()
         else:

@@ -420,6 +420,20 @@ def identify_crisis_periods(dates: pd.DatetimeIndex, probs: np.ndarray,
     list of dict
         Identified crisis periods with start, end, duration, mean probability
     """
+    # Ensure dates is a proper DatetimeIndex
+    if not isinstance(dates, pd.DatetimeIndex):
+        # If it's a RangeIndex or other, we can't identify crisis periods properly
+        # Return empty list
+        if isinstance(dates, pd.RangeIndex):
+            warnings.warn("Dates are RangeIndex, cannot identify crisis periods by date")
+            return []
+        # Try to convert to DatetimeIndex
+        try:
+            dates = pd.DatetimeIndex(dates)
+        except Exception:
+            warnings.warn("Could not convert dates to DatetimeIndex")
+            return []
+
     crisis_mask = probs > threshold
     periods = []
 
@@ -436,21 +450,21 @@ def identify_crisis_periods(dates: pd.DatetimeIndex, probs: np.ndarray,
             in_crisis = False
             if i - start_idx >= min_duration:
                 periods.append({
-                    'start': dates[start_idx],
-                    'end': dates[i-1],
+                    'start': pd.Timestamp(dates[start_idx]),
+                    'end': pd.Timestamp(dates[i-1]),
                     'duration_weeks': i - start_idx,
-                    'mean_prob': probs[start_idx:i].mean(),
-                    'max_prob': probs[start_idx:i].max(),
+                    'mean_prob': float(probs[start_idx:i].mean()),
+                    'max_prob': float(probs[start_idx:i].max()),
                 })
 
     # Handle ongoing crisis at end
     if in_crisis and len(dates) - start_idx >= min_duration:
         periods.append({
-            'start': dates[start_idx],
-            'end': dates[-1],
+            'start': pd.Timestamp(dates[start_idx]),
+            'end': pd.Timestamp(dates[-1]),
             'duration_weeks': len(dates) - start_idx,
-            'mean_prob': probs[start_idx:].mean(),
-            'max_prob': probs[start_idx:].max(),
+            'mean_prob': float(probs[start_idx:].mean()),
+            'max_prob': float(probs[start_idx:].max()),
         })
 
     return periods
@@ -481,10 +495,14 @@ def compare_with_known_crises(identified: List[Dict], known: Dict) -> pd.DataFra
         # Check if any identified period overlaps
         matched = False
         for period in identified:
-            if (period['start'] <= known_end and period['end'] >= known_start):
+            # Ensure period dates are Timestamps
+            period_start = pd.Timestamp(period['start'])
+            period_end = pd.Timestamp(period['end'])
+
+            if (period_start <= known_end and period_end >= known_start):
                 matched = True
-                overlap_start = max(period['start'], known_start)
-                overlap_end = min(period['end'], known_end)
+                overlap_start = max(period_start, known_start)
+                overlap_end = min(period_end, known_end)
                 overlap_days = (overlap_end - overlap_start).days
 
                 results.append({
@@ -492,8 +510,8 @@ def compare_with_known_crises(identified: List[Dict], known: Dict) -> pd.DataFra
                     'Known_Start': known_start.date(),
                     'Known_End': known_end.date(),
                     'Detected': 'Yes',
-                    'Detected_Start': period['start'].date(),
-                    'Detected_End': period['end'].date(),
+                    'Detected_Start': period_start.date(),
+                    'Detected_End': period_end.date(),
                     'Overlap_Days': overlap_days,
                     'Mean_Prob': period['mean_prob'],
                 })
