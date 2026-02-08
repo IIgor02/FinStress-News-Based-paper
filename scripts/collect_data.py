@@ -20,6 +20,7 @@ Output:
 """
 
 import argparse
+import io
 import sys
 import time
 from pathlib import Path
@@ -27,6 +28,7 @@ from typing import List, Optional
 
 import numpy as np
 import pandas as pd
+import requests
 
 # Handle both script execution and interactive/REPL usage
 try:
@@ -136,58 +138,76 @@ def collect_ibovespa(
     output_path: Optional[Path] = None,
 ) -> pd.DataFrame:
     """
-    Download IBOVESPA data from Yahoo Finance.
+    Download IBOVESPA data from Yahoo Finance or alternative sources.
     Calculates returns and realized volatility.
     """
+    df = None
+    source = None
+
+    # Try yfinance first
     try:
         import yfinance as yf
-    except ImportError:
-        print("  ERROR: yfinance not installed.")
-        print("  Install with: pip install yfinance")
-        return pd.DataFrame()
-
-    print(f"  Downloading IBOVESPA (^BVSP) data...")
-
-    try:
+        print(f"  Downloading IBOVESPA (^BVSP) from Yahoo Finance...")
         ticker = yf.Ticker('^BVSP')
         df = ticker.history(start=start_date, end=end_date)
-
-        if df.empty:
-            print("  ERROR: No data returned from Yahoo Finance")
-            return pd.DataFrame()
-
-        df = df.reset_index()
-        df = df.rename(columns={
-            'Date': 'date', 'Open': 'open', 'High': 'high',
-            'Low': 'low', 'Close': 'close', 'Volume': 'volume',
-        })
-
-        # Remove timezone
-        if df['date'].dt.tz is not None:
-            df['date'] = df['date'].dt.tz_localize(None)
-
-        # Calculate returns and volatility
-        df['return'] = df['close'].pct_change()
-        df['log_return'] = np.log(df['close'] / df['close'].shift(1))
-        df['realized_vol_5d'] = df['return'].rolling(5).std() * np.sqrt(252) * 100
-        df['realized_vol_21d'] = df['return'].rolling(21).std() * np.sqrt(252) * 100
-        df['realized_vol_30d'] = df['return'].rolling(30).std() * np.sqrt(252) * 100
-
-        df = df[['date', 'open', 'high', 'low', 'close', 'volume',
-                 'return', 'log_return', 'realized_vol_5d', 'realized_vol_21d', 'realized_vol_30d']]
-
-        print(f"    Downloaded {len(df):,} trading days")
-        print(f"    Period: {df['date'].min().date()} to {df['date'].max().date()}")
-
-        if output_path:
-            df.to_csv(output_path, index=False)
-            print(f"  Saved to {output_path}")
-
-        return df
-
+        if not df.empty:
+            source = "Yahoo Finance (^BVSP)"
+            df = df.reset_index()
+            df = df.rename(columns={
+                'Date': 'date', 'Open': 'open', 'High': 'high',
+                'Low': 'low', 'Close': 'close', 'Volume': 'volume',
+            })
+            if df['date'].dt.tz is not None:
+                df['date'] = df['date'].dt.tz_localize(None)
+    except ImportError:
+        print("  yfinance not available, trying alternative sources...")
     except Exception as e:
-        print(f"  ERROR: {e}")
+        print(f"  Yahoo Finance failed: {e}")
+
+    # Try stooq.com for EWZ (Brazil ETF) as backup
+    if df is None or df.empty:
+        try:
+            import requests
+            import io
+            print("  Downloading EWZ (Brazil ETF) from stooq.com...")
+            start_fmt = start_date.replace('-', '')
+            end_fmt = end_date.replace('-', '')
+            url = f'https://stooq.com/q/d/l/?s=ewz.us&d1={start_fmt}&d2={end_fmt}&i=d'
+            response = requests.get(url, timeout=30)
+            if response.status_code == 200 and len(response.content) > 100:
+                df = pd.read_csv(io.StringIO(response.text))
+                if len(df) > 10:
+                    source = "stooq.com (EWZ)"
+                    df.columns = [c.lower() for c in df.columns]
+                    df = df.sort_values('date')
+        except Exception as e:
+            print(f"  stooq.com failed: {e}")
+
+    if df is None or df.empty:
+        print("  ERROR: Could not fetch IBOVESPA data from any source")
         return pd.DataFrame()
+
+    # Calculate returns and volatility
+    df['return'] = df['close'].pct_change()
+    df['realized_vol_5d'] = df['return'].rolling(5).std() * np.sqrt(252) * 100
+    df['realized_vol_21d'] = df['return'].rolling(21).std() * np.sqrt(252) * 100
+    df['realized_vol_30d'] = df['return'].rolling(30).std() * np.sqrt(252) * 100
+    df['intraday_range'] = (df['high'] - df['low']) / df['close'] * 100
+
+    # Ensure required columns exist
+    cols = ['date', 'open', 'high', 'low', 'close', 'volume', 'return',
+            'realized_vol_5d', 'realized_vol_21d', 'realized_vol_30d', 'intraday_range']
+    df = df[[c for c in cols if c in df.columns]]
+
+    print(f"    Source: {source}")
+    print(f"    Downloaded {len(df):,} trading days")
+    print(f"    Period: {df['date'].min()} to {df['date'].max()}")
+
+    if output_path:
+        df.to_csv(output_path, index=False)
+        print(f"  Saved to {output_path}")
+
+    return df
 
 
 # =============================================================================
