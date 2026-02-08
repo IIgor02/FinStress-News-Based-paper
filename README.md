@@ -151,7 +151,13 @@ python scripts/collect_news.py --no-selenium
 **Note**: G1 and Valor require Selenium for JavaScript-rendered pages. Folha works with regular HTTP requests.
 
 ### CDS Data
-Place Brazil CDS 5Y data at `Brasil CDS 5 Anos USD - Visão Geral.csv` (Investing.com format) or `data/raw/brazil_cds_5y.csv`.
+Real Brazil 5Y CDS data from Investing.com is included. To process:
+```bash
+python scripts/fetch_cds_data.py
+```
+The script automatically finds and parses `Brasil CDS 5 Anos USD - Visão Geral.csv` (Portuguese locale format) and saves it to `data/raw/brazil_cds_5y.csv`.
+
+Data source: [Investing.com Brazil CDS](https://www.investing.com/rates-bonds/brazil-cds-5-years-usd-historical-data)
 
 ## FSI Calculation
 

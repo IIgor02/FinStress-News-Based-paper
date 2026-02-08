@@ -8,9 +8,9 @@ CDS spreads are a market-based measure of sovereign credit risk and serve
 as an excellent benchmark for validating financial stress indices.
 
 Sources attempted:
-1. FRED (Federal Reserve Economic Data) - if available
-2. Yahoo Finance (indirect proxy)
-3. Manual download instructions
+1. Local Investing.com CSV file (Brasil CDS 5 Anos USD - Visão Geral.csv)
+2. FRED (Federal Reserve Economic Data) - if available
+3. Yahoo Finance (indirect proxy)
 
 Usage:
     python scripts/fetch_cds_data.py
@@ -46,7 +46,7 @@ except ImportError:
 try:
     from pandas_datareader import data as pdr
     DATAREADER_AVAILABLE = True
-except ImportError:
+except (ImportError, TypeError):
     DATAREADER_AVAILABLE = False
 
 # Setup paths
@@ -56,6 +56,63 @@ DATA_DIR = _PROJECT_DIR / 'data' / 'raw'
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 OUTPUT_FILE = DATA_DIR / 'brazil_cds_5y.csv'
+
+# Possible names for the Investing.com CDS file
+INVESTING_COM_FILES = [
+    'Brasil CDS 5 Anos USD - Visão Geral.csv',
+    'Brasil CDS 5 Anos USD - Visao Geral.csv',
+    'brazil_cds_investing.csv',
+]
+
+
+def load_investing_com_file():
+    """
+    Load CDS data from Investing.com CSV file.
+
+    The file uses Portuguese locale:
+    - Date format: DD.MM.YYYY
+    - Decimal separator: comma
+    - Columns: Data, Último, Abertura, Máxima, Mínima, Var%
+    """
+    for filename in INVESTING_COM_FILES:
+        filepath = _PROJECT_DIR / filename
+        if filepath.exists():
+            print(f"  Found Investing.com file: {filename}")
+            try:
+                # Read without numeric conversion first to preserve date format
+                df = pd.read_csv(filepath, encoding='utf-8-sig')
+
+                # Rename columns to English
+                column_map = {
+                    'Data': 'date',
+                    'Último': 'cds_5y',
+                    'Abertura': 'open',
+                    'Máxima': 'high',
+                    'Mínima': 'low',
+                    'Var%': 'change_pct'
+                }
+                df = df.rename(columns=column_map)
+
+                # Parse date (DD.MM.YYYY format)
+                df['date'] = pd.to_datetime(df['date'], format='%d.%m.%Y')
+
+                # Convert CDS value: replace comma with dot for decimal
+                df['cds_5y'] = df['cds_5y'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False).astype(float)
+
+                # Keep only date and CDS value
+                df = df[['date', 'cds_5y']].dropna()
+                df = df.sort_values('date')
+
+                print(f"    Loaded {len(df)} observations")
+                print(f"    Period: {df['date'].min().date()} to {df['date'].max().date()}")
+
+                return df, 'Investing.com'
+
+            except Exception as e:
+                print(f"    Error parsing file: {e}")
+                continue
+
+    return None, None
 
 
 def fetch_from_fred():
@@ -146,15 +203,23 @@ def main():
     df = None
     source = None
 
-    # Try different sources
-    print("\n1. Attempting FRED...")
-    fred_data = fetch_from_fred()
-    if fred_data is not None:
-        df = fred_data
-        source = 'FRED'
+    # Try different sources (in order of preference)
 
+    # 1. Check for local Investing.com file first (real data)
+    print("\n1. Checking for Investing.com CSV file...")
+    df, source = load_investing_com_file()
+
+    # 2. Try FRED
     if df is None:
-        print("\n2. Attempting ETF proxy...")
+        print("\n2. Attempting FRED...")
+        fred_data = fetch_from_fred()
+        if fred_data is not None:
+            df = fred_data
+            source = 'FRED'
+
+    # 3. Try ETF proxy
+    if df is None:
+        print("\n3. Attempting ETF proxy...")
         ewz_data = fetch_brazil_embi()
         if ewz_data is not None:
             df = ewz_data
@@ -167,7 +232,7 @@ def main():
         print("\nTo get real CDS data, manually download from:")
         print("  - Investing.com: https://www.investing.com/rates-bonds/brazil-cds-5-years-usd-historical-data")
         print("  - World Gov Bonds: http://www.worldgovernmentbonds.com/cds-historical-data/brazil/5-years/")
-        print("\nSave as: data/raw/brazil_cds_5y.csv with columns: date, cds_5y")
+        print("\nSave the file in the project root directory.")
         return False
 
     if df is not None:
