@@ -677,8 +677,9 @@ def main():
     output_root.mkdir(parents=True, exist_ok=True)
 
     # FSI weekly (save to both locations for compatibility)
+    # Use end of week period (Sunday) to match Google Trends date format
     fsi_df = pd.DataFrame({
-        'date': fsi.index.to_timestamp(),
+        'date': fsi.index.to_timestamp(how='end').normalize(),
         'ml_fsi': fsi.values  # Renamed for consistency with other FSI outputs
     })
     fsi_df.to_csv(CONFIG.OUTPUT_DIR / 'fsi_ml_weekly.csv', index=False)
