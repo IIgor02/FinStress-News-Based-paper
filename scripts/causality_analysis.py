@@ -122,6 +122,9 @@ OUTPUT_DIR = _PROJECT_DIR / 'output'
 PLOTS_DIR = OUTPUT_DIR / 'plots'
 PLOTS_DIR.mkdir(parents=True, exist_ok=True)
 
+# Analysis start date (standardize to 2008 onwards)
+ANALYSIS_START_DATE = pd.Timestamp('2008-01-01')
+
 
 # =============================================================================
 # DATA LOADING
@@ -147,7 +150,8 @@ def load_ibovespa() -> Optional[pd.DataFrame]:
     path = DATA_DIR / 'ibovespa_data.csv'
     if path.exists():
         df = pd.read_csv(path)
-        df['date'] = pd.to_datetime(df['date'])
+        # Handle mixed timezones by converting to UTC then removing timezone info
+        df['date'] = pd.to_datetime(df['date'], utc=True).dt.tz_localize(None)
         return df
     return None
 
@@ -252,6 +256,10 @@ def prepare_analysis_data(max_lags: int = 8) -> Optional[pd.DataFrame]:
         merged = merged.merge(cds_df, on='date', how='outer')
 
     merged = merged.sort_values('date').reset_index(drop=True)
+
+    # Filter to 2008 onwards
+    merged = merged[merged['date'] >= ANALYSIS_START_DATE].copy()
+    print(f"  Filtered to 2008+: {len(merged)} observations")
 
     # Select analysis variables
     analysis_cols = ['date']

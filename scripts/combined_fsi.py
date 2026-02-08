@@ -158,7 +158,8 @@ def load_ibovespa() -> Optional[pd.DataFrame]:
 
     if ibov_path.exists():
         df = pd.read_csv(ibov_path)
-        df['date'] = pd.to_datetime(df['date'])
+        # Handle mixed timezones by converting to UTC then removing timezone info
+        df['date'] = pd.to_datetime(df['date'], utc=True).dt.tz_localize(None)
         print(f"  IBOVESPA: {len(df)} days")
         return df
 

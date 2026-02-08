@@ -99,6 +99,9 @@ OUTPUT_DIR = _PROJECT_DIR / 'output'
 PLOTS_DIR = OUTPUT_DIR / 'plots'
 PLOTS_DIR.mkdir(parents=True, exist_ok=True)
 
+# Analysis start date (standardize to 2008 onwards)
+ANALYSIS_START_DATE = pd.Timestamp('2008-01-01')
+
 
 # =============================================================================
 # DATA LOADING
@@ -173,7 +176,8 @@ def load_ibovespa() -> Optional[pd.DataFrame]:
     ibov_path = DATA_DIR / 'ibovespa_data.csv'
     if ibov_path.exists():
         df = pd.read_csv(ibov_path)
-        df['date'] = pd.to_datetime(df['date'])
+        # Handle mixed timezones by converting to UTC then removing timezone info
+        df['date'] = pd.to_datetime(df['date'], utc=True).dt.tz_localize(None)
         print(f"  IBOVESPA: {len(df)} days")
         return df
     return None
@@ -345,11 +349,18 @@ def apply_kalman_smoothing_to_fsi(fsi_df: pd.DataFrame) -> pd.DataFrame:
         return fsi_df
 
 
+def filter_from_2008(df: pd.DataFrame, date_col: str = 'date') -> pd.DataFrame:
+    """Filter DataFrame to start from 2008 onwards."""
+    if date_col in df.columns:
+        return df[df[date_col] >= ANALYSIS_START_DATE].copy()
+    return df
+
+
 def merge_fsi_data(fsi_data: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     """Merge all FSI series into a single DataFrame.
 
     Handles potential date misalignment between sources by normalizing
-    to the same week period.
+    to the same week period. Filters to start from 2008 onwards.
     """
     if not fsi_data:
         return pd.DataFrame()
@@ -376,6 +387,8 @@ def merge_fsi_data(fsi_data: Dict[str, pd.DataFrame]) -> pd.DataFrame:
 
     if merged is not None:
         merged = merged.sort_values('date')
+        # Filter to 2008 onwards
+        merged = filter_from_2008(merged)
     return merged
 
 

@@ -124,8 +124,12 @@ def load_data() -> Tuple[pd.DataFrame, pd.DataFrame]:
     if not market_path.exists():
         raise FileNotFoundError(f"No IBOVESPA data found. Run: python scripts/collect_data.py --synthetic")
 
-    gt_df = pd.read_csv(gt_path, parse_dates=['date'])
-    market_df = pd.read_csv(market_path, parse_dates=['date'])
+    gt_df = pd.read_csv(gt_path)
+    market_df = pd.read_csv(market_path)
+
+    # Handle mixed timezones by converting to UTC then removing timezone info
+    gt_df['date'] = pd.to_datetime(gt_df['date'], utc=True).dt.tz_localize(None)
+    market_df['date'] = pd.to_datetime(market_df['date'], utc=True).dt.tz_localize(None)
 
     query_cols = [c for c in gt_df.columns if c not in ['date', 'source', 'isPartial']]
     print(f"  Google Trends: {len(gt_df)} weeks, {len(query_cols)} queries")
@@ -146,7 +150,8 @@ def prepare_features_and_target(gt_df: pd.DataFrame, market_df: pd.DataFrame) ->
 
     # Aggregate market data to weekly
     market = market_df.copy()
-    market['week'] = pd.to_datetime(market['date']).dt.to_period('W')
+    # Dates are already datetime, convert to week period
+    market['week'] = market['date'].dt.to_period('W')
 
     # Weekly log returns (sum of daily log returns)
     market['log_return'] = np.log(market['close'] / market['close'].shift(1))
@@ -159,7 +164,8 @@ def prepare_features_and_target(gt_df: pd.DataFrame, market_df: pd.DataFrame) ->
 
     # Align dates
     gt = gt_df.copy()
-    gt['week'] = pd.to_datetime(gt['date']).dt.to_period('W')
+    # Dates are already datetime, convert to week period
+    gt['week'] = gt['date'].dt.to_period('W')
 
     merged = pd.merge(
         gt[['week'] + query_cols],

@@ -112,6 +112,9 @@ OUTPUT_DIR = _PROJECT_DIR / 'output'
 PLOTS_DIR = OUTPUT_DIR / 'plots'
 PLOTS_DIR.mkdir(parents=True, exist_ok=True)
 
+# Analysis start date (standardize to 2008 onwards)
+ANALYSIS_START_DATE = pd.Timestamp('2008-01-01')
+
 
 # =============================================================================
 # DATA CLASSES
@@ -841,8 +844,10 @@ def main():
 
     df = pd.read_csv(fsi_path)
     df['date'] = pd.to_datetime(df['date'])
+    # Filter to 2008 onwards
+    df = df[df['date'] >= ANALYSIS_START_DATE]
     df = df.set_index('date')
-    print(f"  Loaded {len(df)} observations from {fsi_path.name}")
+    print(f"  Loaded {len(df)} observations from {fsi_path.name} (2008+)")
 
     # Select FSI column
     if fsi_col not in df.columns:

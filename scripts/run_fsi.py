@@ -397,7 +397,8 @@ def load_data():
 
     if gt_path.exists():
         gt_df = pd.read_csv(gt_path)
-        gt_df['date'] = pd.to_datetime(gt_df['date'])
+        # Handle mixed timezones by converting to UTC then removing timezone info
+        gt_df['date'] = pd.to_datetime(gt_df['date'], utc=True).dt.tz_localize(None)
         query_cols = [c for c in gt_df.columns if c not in ['date', 'source', 'isPartial']]
         print(f"  Google Trends: {len(gt_df)} weeks, {len(query_cols)} queries")
     else:
@@ -405,7 +406,8 @@ def load_data():
 
     if market_path.exists():
         market_df = pd.read_csv(market_path)
-        market_df['date'] = pd.to_datetime(market_df['date'])
+        # Handle mixed timezones by converting to UTC then removing timezone info
+        market_df['date'] = pd.to_datetime(market_df['date'], utc=True).dt.tz_localize(None)
         print(f"  IBOVESPA: {len(market_df):,} trading days")
     else:
         print(f"  IBOVESPA: File not found at {market_path}")

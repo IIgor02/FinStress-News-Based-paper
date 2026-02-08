@@ -357,7 +357,9 @@ def plot_news_fsi(weekly_df: pd.DataFrame, ibov_df: pd.DataFrame = None,
 
         # Resample IBOV to weekly
         ibov = ibov_df.copy()
-        ibov['date'] = pd.to_datetime(ibov['date'])
+        # Date should already be datetime from loading, but ensure it's timezone-naive
+        if not pd.api.types.is_datetime64_any_dtype(ibov['date']):
+            ibov['date'] = pd.to_datetime(ibov['date'], utc=True).dt.tz_localize(None)
         ibov = ibov.set_index('date')
 
         if 'realized_vol_21d' in ibov.columns:
@@ -483,11 +485,12 @@ def main():
     ibov_df = None
     if ibov_path.exists():
         ibov_df = pd.read_csv(ibov_path)
+        # Handle mixed timezones by converting to UTC then removing timezone info
+        ibov_df['date'] = pd.to_datetime(ibov_df['date'], utc=True).dt.tz_localize(None)
         print(f"  Loaded IBOVESPA data ({len(ibov_df)} days)")
 
         # Standardize FSI with volatility check
         if 'realized_vol_21d' in ibov_df.columns:
-            ibov_df['date'] = pd.to_datetime(ibov_df['date'])
             vol_series = ibov_df.set_index('date')['realized_vol_21d']
             weekly_df = weekly_df.set_index('date')
             weekly_df['news_fsi'] = standardize_fsi(weekly_df['news_fsi'], vol_series)
