@@ -186,10 +186,54 @@ def load_brazil_cds() -> Optional[pd.DataFrame]:
     CDS (Credit Default Swap) spread is a market-based measure of sovereign
     credit risk. Higher CDS = higher perceived default risk = higher stress.
 
-    Tries to load from:
-    1. Local file: data/raw/brazil_cds_5y.csv
-    2. If not found, attempts to fetch from FRED (if available)
+    Tries to load from multiple sources:
+    1. Investing.com format: "Brasil CDS 5 Anos USD - Visão Geral.csv"
+    2. Standard format: data/raw/brazil_cds_5y.csv
     """
+    # Try Investing.com format first (user's uploaded file)
+    investing_path = _PROJECT_DIR / 'Brasil CDS 5 Anos USD - Visão Geral.csv'
+
+    if investing_path.exists():
+        try:
+            # Investing.com uses specific format:
+            # - Date: DD.MM.YYYY
+            # - Values use comma as decimal separator
+            # - Columns: Data, Último, Abertura, Máxima, Mínima, Var%
+            df = pd.read_csv(investing_path, encoding='utf-8-sig')
+
+            # Handle column names (Portuguese)
+            col_mapping = {
+                'Data': 'date',
+                'Último': 'cds_5y',
+                'Abertura': 'open',
+                'Máxima': 'high',
+                'Mínima': 'low',
+                'Var%': 'change_pct'
+            }
+            df = df.rename(columns=col_mapping)
+
+            # Parse date (DD.MM.YYYY format)
+            df['date'] = pd.to_datetime(df['date'], format='%d.%m.%Y')
+
+            # Convert values from European format (comma decimal separator)
+            for col in ['cds_5y', 'open', 'high', 'low']:
+                if col in df.columns:
+                    if df[col].dtype == 'object':
+                        df[col] = df[col].str.replace('.', '', regex=False)
+                        df[col] = df[col].str.replace(',', '.', regex=False)
+                        df[col] = pd.to_numeric(df[col], errors='coerce')
+
+            # Sort by date ascending
+            df = df.sort_values('date').reset_index(drop=True)
+
+            print(f"  Brazil CDS 5Y: {len(df)} observations (Investing.com format)")
+            print(f"    Period: {df['date'].min().date()} to {df['date'].max().date()}")
+            return df[['date', 'cds_5y']]
+
+        except Exception as e:
+            print(f"  Warning: Could not parse Investing.com CDS file: {e}")
+
+    # Try standard format
     cds_path = DATA_DIR / 'brazil_cds_5y.csv'
 
     if cds_path.exists():
@@ -199,37 +243,14 @@ def load_brazil_cds() -> Optional[pd.DataFrame]:
         cds_cols = [c for c in df.columns if 'cds' in c.lower() or 'spread' in c.lower()]
         if cds_cols:
             df = df.rename(columns={cds_cols[0]: 'cds_5y'})
+        df = df.sort_values('date').reset_index(drop=True)
         print(f"  Brazil CDS 5Y: {len(df)} observations")
+        print(f"    Period: {df['date'].min().date()} to {df['date'].max().date()}")
         return df[['date', 'cds_5y']]
-
-    # Try to fetch from pandas_datareader if available
-    try:
-        import pandas_datareader as pdr
-        from datetime import datetime
-
-        print("  Fetching Brazil CDS 5Y from FRED...")
-        # Brazil 5Y CDS is not directly on FRED, but we can try alternative
-        # For now, create synthetic data based on available proxies
-        # In production, this would fetch from Bloomberg or Reuters
-
-        # Alternative: Use EMBI+ Brazil spread as proxy
-        try:
-            embi = pdr.DataReader('BAMLEMHBHYCRPIBRTRUU', 'fred',
-                                  start='2000-01-01', end=datetime.now())
-            embi = embi.reset_index()
-            embi.columns = ['date', 'cds_5y']
-            embi.to_csv(cds_path, index=False)
-            print(f"  Brazil CDS proxy (EMBI): {len(embi)} observations")
-            return embi
-        except Exception:
-            pass
-
-    except ImportError:
-        pass
 
     print("  Brazil CDS 5Y: Not found")
     print("    To add CDS data, place a CSV file at: data/raw/brazil_cds_5y.csv")
-    print("    Format: date,cds_5y (with CDS spread in basis points)")
+    print("    Or download from Investing.com: Brasil CDS 5 Anos USD - Visão Geral.csv")
     return None
 
 
@@ -250,6 +271,11 @@ def process_cds_data(cds_df: pd.DataFrame, freq: str = 'W') -> pd.DataFrame:
         Processed CDS data with normalized values
     """
     df = cds_df.copy()
+
+    # Ensure cds_5y is numeric
+    df['cds_5y'] = pd.to_numeric(df['cds_5y'], errors='coerce')
+    df = df.dropna(subset=['cds_5y'])
+
     df = df.set_index('date')
 
     # Resample to weekly
