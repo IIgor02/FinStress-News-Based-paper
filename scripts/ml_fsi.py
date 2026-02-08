@@ -119,10 +119,10 @@ def load_data() -> Tuple[pd.DataFrame, pd.DataFrame]:
         gt_path = CONFIG.DATA_DIR / 'google_trends_data.csv'
 
     if not gt_path.exists():
-        raise FileNotFoundError(f"No Google Trends data found. Run: python scripts/collect_data.py --ml --synthetic")
+        raise FileNotFoundError(f"No Google Trends data found. Run: python scripts/collect_data.py --ml")
 
     if not market_path.exists():
-        raise FileNotFoundError(f"No IBOVESPA data found. Run: python scripts/collect_data.py --synthetic")
+        raise FileNotFoundError(f"No IBOVESPA data found. Run: python scripts/collect_data.py")
 
     gt_df = pd.read_csv(gt_path)
     market_df = pd.read_csv(market_path)
@@ -132,7 +132,7 @@ def load_data() -> Tuple[pd.DataFrame, pd.DataFrame]:
     market_df['date'] = pd.to_datetime(market_df['date'], utc=True).dt.tz_localize(None)
 
     query_cols = [c for c in gt_df.columns if c not in ['date', 'source', 'isPartial']]
-    print(f"  Google Trends: {len(gt_df)} weeks, {len(query_cols)} queries")
+    print(f"  Google Trends: {len(gt_df)} observations, {len(query_cols)} queries")
     print(f"  IBOVESPA: {len(market_df):,} trading days")
 
     return gt_df, market_df
@@ -142,39 +142,48 @@ def prepare_features_and_target(gt_df: pd.DataFrame, market_df: pd.DataFrame) ->
     """
     Prepare feature matrix X and target vector y.
 
-    X: Weekly search volumes (SVI)
-    y: Next-week IBOVESPA log returns
+    Detects if Google Trends data is weekly or monthly and aggregates market data accordingly.
+    X: Search volumes (SVI)
+    y: Next-period IBOVESPA log returns
     """
     # Get query columns
     query_cols = [c for c in gt_df.columns if c not in ['date', 'source', 'isPartial']]
 
-    # Aggregate market data to weekly
-    market = market_df.copy()
-    # Dates are already datetime, convert to week period
-    market['week'] = market['date'].dt.to_period('W')
+    # Detect if data is monthly or weekly based on median date spacing
+    gt = gt_df.copy()
+    gt = gt.sort_values('date')
+    date_diffs = gt['date'].diff().dt.days.dropna()
+    median_diff = date_diffs.median()
 
-    # Weekly log returns (sum of daily log returns)
+    is_monthly = median_diff > 20  # Monthly if typical gap > 20 days
+    freq = 'M' if is_monthly else 'W'
+    freq_label = 'months' if is_monthly else 'weeks'
+
+    print(f"    Data frequency: {freq_label} (median gap: {median_diff:.0f} days)")
+
+    # Aggregate market data to match GT frequency
+    market = market_df.copy()
+    market['period'] = market['date'].dt.to_period(freq)
+
+    # Log returns (sum of daily log returns)
     market['log_return'] = np.log(market['close'] / market['close'].shift(1))
-    market_weekly = market.groupby('week').agg({
+    market_agg = market.groupby('period').agg({
         'log_return': 'sum',
         'close': 'last',
         CONFIG.VOLATILITY_COLUMN: 'mean'
     }).reset_index()
-    market_weekly['date'] = market_weekly['week'].dt.to_timestamp()
 
-    # Align dates
-    gt = gt_df.copy()
-    # Dates are already datetime, convert to week period
-    gt['week'] = gt['date'].dt.to_period('W')
+    # Convert GT dates to periods
+    gt['period'] = gt['date'].dt.to_period(freq)
 
     merged = pd.merge(
-        gt[['week'] + query_cols],
-        market_weekly[['week', 'log_return', CONFIG.VOLATILITY_COLUMN]],
-        on='week',
+        gt[['period'] + query_cols],
+        market_agg[['period', 'log_return', CONFIG.VOLATILITY_COLUMN]],
+        on='period',
         how='inner'
     )
 
-    # Create target: NEXT week's return (shift -1)
+    # Create target: NEXT period's return (shift -1)
     merged['target'] = merged['log_return'].shift(-1)
 
     # Remove last row (no target) and any NaN
@@ -182,13 +191,13 @@ def prepare_features_and_target(gt_df: pd.DataFrame, market_df: pd.DataFrame) ->
 
     # Feature matrix and target
     X = merged[query_cols].copy()
-    X.index = merged['week']
+    X.index = merged['period']
     y = merged['target'].copy()
-    y.index = merged['week']
+    y.index = merged['period']
 
     # Also return volatility for validation
     vol = merged[CONFIG.VOLATILITY_COLUMN].copy()
-    vol.index = merged['week']
+    vol.index = merged['period']
 
     return X, y, vol
 
@@ -268,26 +277,39 @@ def train_lasso_model(X_train: pd.DataFrame, y_train: pd.Series) -> Tuple:
     tscv = TimeSeriesSplit(n_splits=CONFIG.CV_FOLDS)
 
     # LASSO with automatic lambda selection
+    # Use a smaller alpha range to encourage some feature selection
+    # Default alphas can be too conservative for financial prediction
     print("    Fitting LASSO model with cross-validation...")
+    alphas = np.logspace(-5, -1, 100)  # Range from 0.00001 to 0.1
     model = LassoCV(
         cv=tscv,
+        alphas=alphas,
         max_iter=10000,
-        n_alphas=100,
         random_state=42,
         n_jobs=-1
     )
     model.fit(X_scaled, y_train)
 
+    # If LASSO selects 0 features, try with minimum alpha
+    is_fallback = False
+    if np.sum(model.coef_ != 0) == 0:
+        print("    No features selected with CV alpha, trying smaller regularization...")
+        from sklearn.linear_model import Lasso
+        model = Lasso(alpha=1e-5, max_iter=10000, random_state=42)
+        model.fit(X_scaled, y_train)
+        is_fallback = True
+
     # Results
     n_nonzero = np.sum(model.coef_ != 0)
     r2_train = model.score(X_scaled, y_train)
 
-    print(f"    Optimal lambda: {model.alpha_:.6f}")
+    optimal_alpha = model.alpha if is_fallback else model.alpha_
+    print(f"    Optimal lambda: {optimal_alpha:.6f}")
     print(f"    Non-zero coefficients: {n_nonzero}/{len(model.coef_)}")
     print(f"    In-sample R²: {r2_train:.4f}")
 
     cv_results = {
-        'optimal_lambda': model.alpha_,
+        'optimal_lambda': optimal_alpha,
         'n_features': len(model.coef_),
         'n_selected': n_nonzero,
         'train_r2': r2_train,
@@ -591,7 +613,7 @@ def main():
     # Prepare features and target
     print("\nPreparing features and target...")
     X, y, vol = prepare_features_and_target(gt_df, market_df)
-    print(f"    Sample size: {len(X)} weeks")
+    print(f"    Sample size: {len(X)} observations")
     print(f"    Features: {X.shape[1]} queries")
     print(f"    Period: {X.index.min()} to {X.index.max()}")
 
@@ -603,16 +625,17 @@ def main():
         print(f"\nERROR: Only {X.shape[1]} valid queries (need {CONFIG.MIN_QUERIES})")
         return
 
-    # Train/test split (temporal)
-    train_end = pd.Period(CONFIG.TRAIN_END, freq='W')
+    # Train/test split (temporal) - detect frequency from data
+    data_freq = X.index[0].freq
+    train_end = pd.Period(CONFIG.TRAIN_END, freq=data_freq)
     X_train = X[X.index <= train_end]
     y_train = y[y.index <= train_end]
     X_test = X[X.index > train_end]
     y_test = y[y.index > train_end]
 
     print(f"\nTrain/Test Split:")
-    print(f"    Training: {len(X_train)} weeks (up to {CONFIG.TRAIN_END})")
-    print(f"    Testing:  {len(X_test)} weeks (after {CONFIG.TRAIN_END})")
+    print(f"    Training: {len(X_train)} observations (up to {CONFIG.TRAIN_END})")
+    print(f"    Testing:  {len(X_test)} observations (after {CONFIG.TRAIN_END})")
 
     # Train LASSO model
     print("\nTraining LASSO model...")

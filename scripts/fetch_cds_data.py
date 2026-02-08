@@ -138,76 +138,6 @@ def fetch_brazil_embi():
     return None
 
 
-def create_synthetic_cds():
-    """
-    Create synthetic CDS data based on known crisis periods.
-
-    This is a fallback for when real data is unavailable.
-    The synthetic data is based on documented Brazil CDS levels
-    during major events.
-    """
-    print("  Creating synthetic CDS based on historical benchmarks...")
-
-    # Known Brazil CDS 5Y levels (approximate, from various sources)
-    # Source: Bloomberg, Reuters historical reports
-    known_levels = {
-        '2002-10-01': 2500,  # Lula election uncertainty
-        '2003-01-01': 1800,  # Post-election normalization
-        '2004-01-01': 500,   # Recovery
-        '2005-01-01': 400,
-        '2006-01-01': 220,
-        '2007-01-01': 120,
-        '2008-03-01': 200,   # Pre-crisis
-        '2008-10-01': 550,   # Global Financial Crisis
-        '2009-03-01': 420,
-        '2010-01-01': 130,
-        '2011-01-01': 110,
-        '2012-01-01': 140,
-        '2013-06-01': 180,   # Taper tantrum
-        '2014-01-01': 170,
-        '2015-01-01': 250,   # Political crisis begins
-        '2015-09-01': 450,   # Dilma impeachment process
-        '2016-01-01': 500,
-        '2016-06-01': 350,   # Post-impeachment
-        '2017-01-01': 230,
-        '2017-05-01': 280,   # Joesley Day
-        '2018-01-01': 150,
-        '2018-05-01': 220,   # Trucker strike
-        '2019-01-01': 170,
-        '2020-01-01': 100,
-        '2020-03-15': 350,   # COVID-19 shock
-        '2020-05-01': 280,
-        '2021-01-01': 180,
-        '2022-01-01': 200,
-        '2022-10-01': 250,   # Election
-        '2023-01-01': 200,
-        '2024-01-01': 150,
-        '2025-01-01': 140,
-    }
-
-    # Create DataFrame from known levels
-    dates = pd.to_datetime(list(known_levels.keys()))
-    values = list(known_levels.values())
-
-    df = pd.DataFrame({'date': dates, 'cds_5y': values})
-    df = df.sort_values('date')
-
-    # Interpolate to daily frequency
-    df = df.set_index('date')
-    daily_index = pd.date_range(start=df.index.min(), end=datetime.now(), freq='D')
-    df = df.reindex(daily_index)
-    df['cds_5y'] = df['cds_5y'].interpolate(method='linear')
-    df = df.reset_index()
-    df.columns = ['date', 'cds_5y']
-
-    # Add some noise for realism
-    np.random.seed(42)
-    noise = np.random.normal(0, df['cds_5y'] * 0.02, len(df))
-    df['cds_5y'] = (df['cds_5y'] + noise).clip(50, 3000)
-
-    return df
-
-
 def main():
     print("=" * 60)
     print("BRAZIL 5Y CDS DATA FETCHER")
@@ -231,9 +161,14 @@ def main():
             source = 'EWZ_proxy'
 
     if df is None:
-        print("\n3. Using synthetic historical data...")
-        df = create_synthetic_cds()
-        source = 'synthetic'
+        print("\n" + "=" * 60)
+        print("ERROR: Could not fetch CDS data from any source.")
+        print("=" * 60)
+        print("\nTo get real CDS data, manually download from:")
+        print("  - Investing.com: https://www.investing.com/rates-bonds/brazil-cds-5-years-usd-historical-data")
+        print("  - World Gov Bonds: http://www.worldgovernmentbonds.com/cds-historical-data/brazil/5-years/")
+        print("\nSave as: data/raw/brazil_cds_5y.csv with columns: date, cds_5y")
+        return False
 
     if df is not None:
         # Ensure proper format
@@ -260,13 +195,6 @@ def main():
         print(f"  Mean: {df['cds_5y'].mean():.1f} bps")
         print(f"  Min:  {df['cds_5y'].min():.1f} bps")
         print(f"  Max:  {df['cds_5y'].max():.1f} bps")
-
-        if source == 'synthetic':
-            print("\n" + "-" * 60)
-            print("NOTE: Synthetic data used. For real CDS data, download from:")
-            print("  - Investing.com: https://www.investing.com/rates-bonds/brazil-cds-5-years-usd-historical-data")
-            print("  - World Gov Bonds: http://www.worldgovernmentbonds.com/cds-historical-data/brazil/5-years/")
-            print("-" * 60)
 
         return True
     else:
