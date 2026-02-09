@@ -272,18 +272,17 @@ def prepare_analysis_data(max_lags: int = 8) -> Optional[pd.DataFrame]:
     # Select analysis variables
     # Note: Variable ordering matters for Cholesky identification in VAR/IRF
     # Order: fast-moving (volatility) → risk indicators (CDS) → stress indices
-    # Using combined_fsi for VAR (dict_fsi, ml_fsi are components causing multicollinearity)
-    # Keep all FSIs for Granger tests but mark VAR variables separately
+    # Keep all FSIs for Granger tests and bivariate IRF, but use subset for multivariate VAR
     analysis_cols = ['date']
-    # All variables for Granger tests
-    all_vars = ['dict_fsi', 'ml_fsi', 'combined_fsi', 'volatility', 'cds_5y']
+    # All variables including all FSI indices
+    all_vars = ['dict_fsi', 'ml_fsi', 'news_fsi', 'combined_fsi', 'volatility', 'cds_5y']
     for col in all_vars:
         if col in merged.columns:
             analysis_cols.append(col)
 
     merged = merged[analysis_cols]
 
-    # Mark which variables to use for VAR (to avoid multicollinearity)
+    # Mark which variables to use for multivariate VAR (to avoid multicollinearity)
     # Order: volatility → cds_5y → combined_fsi (from most exogenous to most endogenous)
     merged.attrs['var_variables'] = ['volatility', 'cds_5y', 'combined_fsi']
 
@@ -644,6 +643,122 @@ def plot_single_irf(irf, var_names: List[str], impulse: str,
     plt.close()
 
 
+def run_bivariate_irf(df: pd.DataFrame, shock_var: str, response_var: str,
+                      periods: int = 20, max_lag: int = 8) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+    """
+    Run bivariate VAR and compute IRF for a single shock-response pair.
+
+    Returns (irf_values, lower_ci, upper_ci, n_periods) or (None, None, None, 0) if failed.
+    """
+    # Order: shock variable first (more exogenous), response second
+    var_data = df[[shock_var, response_var]].dropna()
+
+    if len(var_data) < max_lag * 3:
+        return None, None, None, 0
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            model = VAR(var_data)
+            # Select optimal lag
+            results = model.fit(maxlags=max_lag, ic='aic')
+
+            # Compute IRF
+            irf = results.irf(periods=periods)
+
+            # Get IRF values (response of second variable to shock in first)
+            irf_values = irf.irfs[:, 1, 0]  # response_var response to shock_var shock
+            n_periods = len(irf_values)
+
+            # Get standard errors for confidence intervals
+            try:
+                stderr = irf.stderr()
+                if stderr is not None:
+                    std_err = stderr[:, 1, 0]
+                    lower = irf_values - 2 * std_err
+                    upper = irf_values + 2 * std_err
+                else:
+                    lower = upper = None
+            except:
+                lower = upper = None
+
+            return irf_values, lower, upper, n_periods
+
+    except Exception as e:
+        return None, None, None, 0
+
+
+def plot_fsi_shock_responses(df: pd.DataFrame, output_path: Path = None):
+    """
+    Create comprehensive IRF plot showing how each FSI responds to volatility and CDS shocks.
+    """
+    if not MATPLOTLIB_AVAILABLE:
+        return
+
+    fsi_indices = ['dict_fsi', 'ml_fsi', 'news_fsi', 'combined_fsi']
+    shock_vars = ['volatility', 'cds_5y']
+
+    # Filter to available FSIs
+    available_fsis = [f for f in fsi_indices if f in df.columns]
+    available_shocks = [s for s in shock_vars if s in df.columns]
+
+    if not available_fsis or not available_shocks:
+        print("  Insufficient data for FSI shock response analysis")
+        return
+
+    n_fsis = len(available_fsis)
+    n_shocks = len(available_shocks)
+
+    fig, axes = plt.subplots(n_shocks, n_fsis, figsize=(4*n_fsis, 4*n_shocks))
+
+    periods = 20
+
+    for i, shock in enumerate(available_shocks):
+        for j, fsi in enumerate(available_fsis):
+            ax = axes[i, j] if n_shocks > 1 and n_fsis > 1 else (axes[j] if n_shocks == 1 else axes[i])
+
+            # Run bivariate IRF
+            irf_values, lower, upper, n_periods = run_bivariate_irf(df, shock, fsi, periods=periods)
+
+            if irf_values is not None and n_periods > 0:
+                # Plot confidence interval
+                if lower is not None and upper is not None:
+                    ax.fill_between(range(n_periods), lower, upper, alpha=0.2, color='gray')
+
+                # Plot IRF line
+                ax.plot(range(n_periods), irf_values, color='black', linewidth=1.5)
+
+                # Check significance (CI doesn't cross zero)
+                if lower is not None and upper is not None:
+                    significant = not any((lower[k] <= 0 <= upper[k]) for k in range(1, min(8, n_periods)))
+                    sig_marker = '*' if significant else ''
+                else:
+                    sig_marker = ''
+            else:
+                ax.text(0.5, 0.5, 'N/A', ha='center', va='center', transform=ax.transAxes)
+                sig_marker = ''
+
+            ax.axhline(y=0, color='gray', linestyle='--', linewidth=0.5)
+
+            # Labels
+            fsi_label = fsi.replace('_', ' ').replace('fsi', 'FSI').title()
+            shock_label = shock.replace('_', ' ').replace('5y', '5Y').title()
+            ax.set_title(f'{shock_label} → {fsi_label}{sig_marker}', fontsize=10)
+
+            if i == n_shocks - 1:
+                ax.set_xlabel('Weeks')
+            if j == 0:
+                ax.set_ylabel('Response')
+
+    plt.suptitle('FSI Responses to Market Shocks\n(* indicates significant at 95% CI for first 8 weeks)', fontsize=12)
+    plt.tight_layout()
+
+    if output_path:
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        print(f"  Saved: {output_path}")
+    plt.close()
+
+
 # =============================================================================
 # REPORT GENERATION
 # =============================================================================
@@ -868,6 +983,10 @@ def main():
             if impulse in var_variables:
                 plot_single_irf(irf, var_variables, impulse,
                                PLOTS_DIR / f'irf_{impulse}.png')
+
+    # Bivariate IRF analysis for each FSI index
+    print("\nComputing bivariate IRFs for each FSI index...")
+    plot_fsi_shock_responses(df, PLOTS_DIR / 'irf_fsi_responses.png')
 
     print("\n" + "=" * 70)
     print("CAUSALITY ANALYSIS COMPLETE")
