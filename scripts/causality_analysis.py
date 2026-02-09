@@ -179,14 +179,16 @@ def load_brazil_cds() -> Optional[pd.DataFrame]:
             # Parse date (DD.MM.YYYY format)
             df['date'] = pd.to_datetime(df['date'], format='%d.%m.%Y')
 
-            # Convert values from European format
+            # Convert values from European format (force string conversion first)
             for col in ['cds_5y', 'open', 'high', 'low']:
                 if col in df.columns:
-                    if df[col].dtype == 'object':
-                        df[col] = df[col].str.replace('.', '', regex=False)
-                        df[col] = df[col].str.replace(',', '.', regex=False)
-                        df[col] = pd.to_numeric(df[col], errors='coerce')
+                    # Always convert to string first to ensure proper processing
+                    df[col] = df[col].astype(str)
+                    df[col] = df[col].str.replace('.', '', regex=False)
+                    df[col] = df[col].str.replace(',', '.', regex=False)
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
 
+            df = df.dropna(subset=['cds_5y'])
             df = df.sort_values('date').reset_index(drop=True)
             return df[['date', 'cds_5y']]
 
@@ -198,10 +200,10 @@ def load_brazil_cds() -> Optional[pd.DataFrame]:
     if cds_path.exists():
         df = pd.read_csv(cds_path)
         df['date'] = pd.to_datetime(df['date'])
-        # Ensure cds_5y is numeric
-        if df['cds_5y'].dtype == 'object':
-            df['cds_5y'] = df['cds_5y'].str.replace('.', '', regex=False)
-            df['cds_5y'] = df['cds_5y'].str.replace(',', '.', regex=False)
+        # Ensure cds_5y is numeric (force string conversion first)
+        df['cds_5y'] = df['cds_5y'].astype(str)
+        df['cds_5y'] = df['cds_5y'].str.replace('.', '', regex=False)
+        df['cds_5y'] = df['cds_5y'].str.replace(',', '.', regex=False)
         df['cds_5y'] = pd.to_numeric(df['cds_5y'], errors='coerce')
         df = df.dropna(subset=['cds_5y'])
         df = df.sort_values('date').reset_index(drop=True)

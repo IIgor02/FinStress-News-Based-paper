@@ -550,6 +550,11 @@ def plot_regime_analysis(fsi: pd.Series, results: RegimeResults,
     if not isinstance(dates, pd.DatetimeIndex):
         dates = fsi.dropna().index
 
+    # Apply smoothing to regime probabilities for cleaner visualization
+    # Use rolling window to avoid rapid regime switching in plots
+    smoothed_probs_series = pd.Series(results.smoothed_probs, index=dates)
+    smoothed_probs_plot = smoothed_probs_series.rolling(window=4, min_periods=1, center=True).mean().values
+
     # Plot 1: FSI with regime coloring
     ax1 = axes[0]
     fsi_clean = fsi.dropna()
@@ -560,11 +565,10 @@ def plot_regime_analysis(fsi: pd.Series, results: RegimeResults,
     ax1.axhline(y=results.mu_crisis, color=COLORS['crisis'], linestyle='--',
                alpha=0.7, label=f'Crisis mean ({results.mu_crisis:.2f})')
 
-    # Shade crisis periods
-    crisis_mask = results.smoothed_probs > 0.5
-    crisis_mask_values = crisis_mask.values  # Convert to numpy array for integer indexing
-    for i in range(len(crisis_mask_values)):
-        if crisis_mask_values[i]:
+    # Shade crisis periods using smoothed probabilities
+    crisis_mask = smoothed_probs_plot > 0.5
+    for i in range(len(crisis_mask)):
+        if crisis_mask[i]:
             ax1.axvspan(dates[i], dates[min(i+1, len(dates)-1)],
                        alpha=0.15, color=COLORS['crisis'])
 
@@ -573,11 +577,11 @@ def plot_regime_analysis(fsi: pd.Series, results: RegimeResults,
     ax1.set_title('Financial Stress Index with Regime Classification')
     ax1.legend(loc='upper left')
 
-    # Plot 2: Crisis probability
+    # Plot 2: Crisis probability (smoothed for cleaner display)
     ax2 = axes[1]
-    ax2.fill_between(dates, 0, results.smoothed_probs,
+    ax2.fill_between(dates, 0, smoothed_probs_plot,
                     alpha=0.5, color=COLORS['probability'], label='P(Crisis)')
-    ax2.plot(dates, results.smoothed_probs, color=COLORS['probability'], linewidth=1)
+    ax2.plot(dates, smoothed_probs_plot, color=COLORS['probability'], linewidth=1)
     ax2.axhline(y=0.5, color=COLORS['neutral'], linestyle='--', alpha=0.5)
 
     ax2.set_ylabel('P(Crisis Regime)')
@@ -591,9 +595,9 @@ def plot_regime_analysis(fsi: pd.Series, results: RegimeResults,
         if dates.min() <= end_dt and dates.max() >= start_dt:
             ax2.axvspan(start_dt, end_dt, alpha=0.1, color='black')
 
-    # Plot 3: Regime classification
+    # Plot 3: Regime classification (smoothed probabilities)
     ax3 = axes[2]
-    regime_class = classify_regimes(results.smoothed_probs)
+    regime_class = classify_regimes(smoothed_probs_plot)
 
     ax3.fill_between(dates, 0, regime_class,
                     where=regime_class == 1,
@@ -805,6 +809,8 @@ def main():
                         help='Use Kalman-smoothed FSI data')
     parser.add_argument('--threshold', type=float, default=0.7,
                         help='Crisis probability threshold (default: 0.7)')
+    parser.add_argument('--pre-smooth', type=int, default=8,
+                        help='Apply rolling window smoothing before Markov model (weeks, default: 8)')
     args = parser.parse_args()
 
     print("=" * 70)
@@ -863,6 +869,13 @@ def main():
 
     fsi = df[fsi_col]
     print(f"  Using column: {fsi_col}")
+
+    # Apply pre-smoothing to reduce noise before Markov model
+    if args.pre_smooth > 1:
+        print(f"\n  Applying {args.pre_smooth}-week rolling window smoothing to reduce noise...")
+        fsi_original = fsi.copy()
+        fsi = fsi.rolling(window=args.pre_smooth, min_periods=1, center=True).mean()
+        print(f"    Original std: {fsi_original.std():.4f}, Smoothed std: {fsi.std():.4f}")
 
     # Fit Markov Switching Model
     print("\nFitting Markov Switching Model...")
