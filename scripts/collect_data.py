@@ -220,8 +220,8 @@ def main():
     )
     parser.add_argument('--ml', action='store_true',
                         help='Collect expanded queries for ML approach (104 queries)')
-    parser.add_argument('--start-date', type=str, default='2015-01-01',
-                        help='Start date (default: 2015-01-01)')
+    parser.add_argument('--start-date', type=str, default='2008-01-01',
+                        help='Start date (default: 2008-01-01)')
     parser.add_argument('--end-date', type=str, default='2025-12-31',
                         help='End date (default: 2025-12-31)')
 
