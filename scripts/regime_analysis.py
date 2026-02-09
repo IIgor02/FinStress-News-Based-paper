@@ -332,8 +332,19 @@ class MarkovSwitchingFSI:
             mu_crisis = float(np.percentile(data_values, 75))  # Upper quartile for crisis
             sigma_calm = float(np.std(data_values[data_values < np.median(data_values)]))
             sigma_crisis = float(np.std(data_values[data_values >= np.median(data_values)]))
-            smoothed_crisis = smoothed[0]
-            filtered_crisis = filtered[0]
+
+            # Determine which regime corresponds to high FSI (crisis)
+            # Calculate mean FSI when each regime has high probability
+            regime0_mean = np.mean(data_values[smoothed[0] > 0.5]) if np.sum(smoothed[0] > 0.5) > 0 else 0
+            regime1_mean = np.mean(data_values[smoothed[1] > 0.5]) if smoothed.shape[0] > 1 and np.sum(smoothed[1] > 0.5) > 0 else 0
+
+            # Crisis regime is the one with higher mean FSI
+            if regime0_mean > regime1_mean:
+                smoothed_crisis = smoothed[0]
+                filtered_crisis = filtered[0]
+            else:
+                smoothed_crisis = smoothed[1] if smoothed.shape[0] > 1 else smoothed[0]
+                filtered_crisis = filtered[1] if filtered.shape[0] > 1 else filtered[0]
 
         # Get transition matrix
         trans_mat = self.results.regime_transition

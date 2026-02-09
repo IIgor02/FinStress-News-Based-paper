@@ -270,12 +270,22 @@ def prepare_analysis_data(max_lags: int = 8) -> Optional[pd.DataFrame]:
     print(f"  Filtered to 2008+: {len(merged)} observations")
 
     # Select analysis variables
+    # Note: Variable ordering matters for Cholesky identification in VAR/IRF
+    # Order: fast-moving (volatility) → risk indicators (CDS) → stress indices
+    # Using combined_fsi for VAR (dict_fsi, ml_fsi are components causing multicollinearity)
+    # Keep all FSIs for Granger tests but mark VAR variables separately
     analysis_cols = ['date']
-    for col in ['dict_fsi', 'ml_fsi', 'news_fsi', 'combined_fsi', 'volatility', 'cds_5y']:
+    # All variables for Granger tests
+    all_vars = ['dict_fsi', 'ml_fsi', 'combined_fsi', 'volatility', 'cds_5y']
+    for col in all_vars:
         if col in merged.columns:
             analysis_cols.append(col)
 
     merged = merged[analysis_cols]
+
+    # Mark which variables to use for VAR (to avoid multicollinearity)
+    # Order: volatility → cds_5y → combined_fsi (from most exogenous to most endogenous)
+    merged.attrs['var_variables'] = ['volatility', 'cds_5y', 'combined_fsi']
 
     # Drop rows with all NaN (except date)
     merged = merged.dropna(how='all', subset=[c for c in merged.columns if c != 'date'])
@@ -520,13 +530,15 @@ def plot_granger_heatmap(granger_df: pd.DataFrame, output_path: Path = None):
     plt.close()
 
 
-def plot_irf(irf, var_names: List[str], output_path: Path = None):
-    """Plot Impulse Response Functions."""
+def plot_irf(irf, var_names: List[str], output_path: Path = None, sigs: int = 2):
+    """Plot Impulse Response Functions with confidence intervals."""
     if not MATPLOTLIB_AVAILABLE or irf is None:
         return
 
     n_vars = len(var_names)
     fig, axes = plt.subplots(n_vars, n_vars, figsize=(4*n_vars, 3*n_vars))
+
+    periods = len(irf.irfs)
 
     for i, response in enumerate(var_names):
         for j, impulse in enumerate(var_names):
@@ -535,16 +547,27 @@ def plot_irf(irf, var_names: List[str], output_path: Path = None):
             # Get IRF
             irf_values = irf.irfs[:, i, j]
 
-            # Get confidence intervals if available
+            # Get confidence intervals
             try:
-                lower = irf.ci[:, i, j, 0]
-                upper = irf.ci[:, i, j, 1]
-                ax.fill_between(range(len(irf_values)), lower, upper, alpha=0.3)
+                if hasattr(irf, 'ci') and irf.ci is not None:
+                    lower = irf.ci[:, i, j, 0]
+                    upper = irf.ci[:, i, j, 1]
+                else:
+                    stderr = irf.stderr()
+                    if stderr is not None:
+                        std_err = stderr[:, i, j]
+                        lower = irf_values - sigs * std_err
+                        upper = irf_values + sigs * std_err
+                    else:
+                        lower = upper = None
+
+                if lower is not None and upper is not None:
+                    ax.fill_between(range(periods), lower, upper, alpha=0.2, color='gray')
             except:
                 pass
 
-            ax.plot(irf_values, color=COLORS.get(impulse, 'blue'), linewidth=1.5)
-            ax.axhline(y=0, color='black', linestyle='--', linewidth=0.5)
+            ax.plot(irf_values, color='black', linewidth=1.5)
+            ax.axhline(y=0, color='gray', linestyle='--', linewidth=0.5)
 
             ax.set_title(f'{impulse} → {response}', fontsize=9)
             if i == n_vars - 1:
@@ -562,8 +585,8 @@ def plot_irf(irf, var_names: List[str], output_path: Path = None):
 
 
 def plot_single_irf(irf, var_names: List[str], impulse: str,
-                    output_path: Path = None):
-    """Plot IRF for a single impulse variable."""
+                    output_path: Path = None, sigs: int = 2):
+    """Plot IRF for a single impulse variable with confidence intervals."""
     if not MATPLOTLIB_AVAILABLE or irf is None:
         return
 
@@ -575,22 +598,38 @@ def plot_single_irf(irf, var_names: List[str], impulse: str,
 
     fig, axes = plt.subplots(1, n_responses, figsize=(4*n_responses, 4))
 
+    periods = len(irf.irfs)
+
     for i, response in enumerate(var_names):
         ax = axes[i] if n_responses > 1 else axes
 
         irf_values = irf.irfs[:, i, j]
 
-        # Confidence intervals
+        # Compute bootstrap confidence intervals if not available
         try:
-            lower = irf.ci[:, i, j, 0]
-            upper = irf.ci[:, i, j, 1]
-            ax.fill_between(range(len(irf_values)), lower, upper,
-                           alpha=0.3, color=COLORS.get(response, 'blue'))
-        except:
+            # Try to get pre-computed confidence intervals
+            if hasattr(irf, 'ci') and irf.ci is not None:
+                lower = irf.ci[:, i, j, 0]
+                upper = irf.ci[:, i, j, 1]
+            else:
+                # Use asymptotic standard errors
+                stderr = irf.stderr()
+                if stderr is not None:
+                    std_err = stderr[:, i, j]
+                    lower = irf_values - sigs * std_err
+                    upper = irf_values + sigs * std_err
+                else:
+                    lower = upper = None
+
+            if lower is not None and upper is not None:
+                ax.fill_between(range(periods), lower, upper,
+                               alpha=0.2, color='gray', label=f'{sigs}σ CI')
+        except Exception:
             pass
 
-        ax.plot(irf_values, color=COLORS.get(response, 'blue'), linewidth=1.5)
-        ax.axhline(y=0, color='black', linestyle='--', linewidth=0.5)
+        # Plot IRF line in black
+        ax.plot(irf_values, color='black', linewidth=1.5)
+        ax.axhline(y=0, color='gray', linestyle='--', linewidth=0.5)
         ax.set_title(f'Response: {response}')
         ax.set_xlabel('Weeks')
         ax.set_ylabel('Response')
@@ -782,9 +821,14 @@ def main():
     else:
         print("\n  No significant causal relationships found at 5% level")
 
+    # Get VAR variables (subset to avoid multicollinearity)
+    var_variables = df.attrs.get('var_variables', variables)
+    var_variables = [v for v in var_variables if v in df.columns]
+    print(f"\nVAR analysis variables: {var_variables}")
+
     # Fit VAR model
     print("\nFitting VAR model...")
-    model, var_results, optimal_lag = fit_var_model(df, variables, args.lags * 2)
+    model, var_results, optimal_lag = fit_var_model(df, var_variables, args.lags * 2)
 
     if var_results is not None:
         print(f"  Optimal lag: {optimal_lag}")
@@ -817,12 +861,12 @@ def main():
     # IRF plots
     if irf is not None:
         # Full IRF matrix
-        plot_irf(irf, variables, PLOTS_DIR / 'irf_full.png')
+        plot_irf(irf, var_variables, PLOTS_DIR / 'irf_full.png')
 
         # Individual IRF plots for key impulses
         for impulse in ['volatility', 'cds_5y', 'combined_fsi']:
-            if impulse in variables:
-                plot_single_irf(irf, variables, impulse,
+            if impulse in var_variables:
+                plot_single_irf(irf, var_variables, impulse,
                                PLOTS_DIR / f'irf_{impulse}.png')
 
     print("\n" + "=" * 70)
