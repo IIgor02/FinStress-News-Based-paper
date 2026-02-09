@@ -311,9 +311,98 @@ def prepare_analysis_data(max_lags: int = 8, frequency: str = 'weekly') -> Optio
 
     print(f"  Merged dataset: {len(merged)} observations")
     print(f"  Period: {merged['date'].min().date()} to {merged['date'].max().date()}")
-    print(f"  Variables: {[c for c in merged.columns if c != 'date']}")
+
+    # ==========================================================================
+    # CRITICAL: Transform to stationary and standardize
+    # ==========================================================================
+    print("\nApplying econometric transformations...")
+
+    # Step 1: Transform CDS to log-returns and volatility to log scale
+    merged = transform_to_stationary(merged)
+
+    # Step 2: Drop NaN rows created by differencing
+    merged = merged.dropna(subset=['cds_5y'])  # cds_5y is now log-return
+
+    # Step 3: Standardize all analysis variables (mean=0, std=1)
+    # This ensures IRF shows response to one-standard-deviation shock
+    analysis_vars = [c for c in merged.columns if c not in ['date', 'cds_level', 'vol_level', 'cds_log_ret']]
+    merged = standardize_variables(merged, analysis_vars)
+
+    print(f"  After transformations: {len(merged)} observations")
+    print(f"  Variables: {[c for c in merged.columns if c not in ['cds_level', 'vol_level', 'cds_log_ret']]}")
+    print("  Note: CDS transformed to log-returns, volatility to log scale, all standardized")
 
     return merged
+
+
+# =============================================================================
+# DATA TRANSFORMATION FOR STATIONARITY
+# =============================================================================
+
+def transform_to_stationary(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Transform variables to stationary representations following econometric best practices.
+
+    Key insight from investigation:
+    - CDS levels are non-stationary (ADF p~0.086) → use log-returns
+    - Volatility is borderline → use log transformation for stability
+    - FSI indices are already stationary bounded measures
+
+    References:
+    - Hamilton (1994): Time Series Analysis - non-stationary variables in VAR
+    - Lütkepohl (2005): Variables must be stationary for valid VAR inference
+    """
+    result = df.copy()
+
+    # Transform CDS to log-returns (percentage change in log scale)
+    # This ensures stationarity and makes shocks comparable to FSI
+    if 'cds_5y' in result.columns:
+        # Log-return: 100 * (log(P_t) - log(P_{t-1}))
+        result['cds_log_ret'] = np.log(result['cds_5y']).diff() * 100
+        # Keep original for reference but use log-return for analysis
+        result['cds_level'] = result['cds_5y']  # Save original
+        result['cds_5y'] = result['cds_log_ret']  # Replace with stationary version
+
+    # Transform volatility to log scale (stabilizes variance, improves normality)
+    if 'volatility' in result.columns:
+        # Small constant to avoid log(0)
+        result['vol_level'] = result['volatility']  # Save original
+        result['volatility'] = np.log(result['volatility'] + 0.001)
+
+    # FSI indices are already bounded/stationary - no transformation needed
+    # (They are based on sentiment proportions or normalized scores)
+
+    return result
+
+
+def standardize_variables(df: pd.DataFrame, variables: List[str]) -> pd.DataFrame:
+    """
+    Standardize variables to have mean 0 and std 1.
+
+    This ensures IRF magnitudes are comparable across variables and
+    represents responses to one-standard-deviation shocks.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Data with variables to standardize
+    variables : list
+        Column names to standardize
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with standardized variables
+    """
+    result = df.copy()
+
+    for var in variables:
+        if var in result.columns:
+            series = result[var].dropna()
+            if len(series) > 0 and series.std() > 0:
+                result[var] = (result[var] - series.mean()) / series.std()
+
+    return result
 
 
 # =============================================================================
@@ -872,6 +961,21 @@ def generate_causality_report(stationarity_df: pd.DataFrame,
     lines.append("1. METHODOLOGY")
     lines.append("=" * 70)
     lines.append("""
+    Data Transformations (Following Econometric Best Practices):
+    ------------------------------------------------------------
+    - CDS: Transformed to log-returns (ensures stationarity)
+      Original CDS levels are non-stationary (ADF p~0.09), which can
+      produce spurious results. Log-returns are stationary.
+
+    - Volatility: Transformed to log scale (stabilizes variance)
+
+    - FSI indices: No transformation (already bounded/stationary)
+
+    - All variables: Standardized (mean=0, std=1) so IRF shows
+      response to one-standard-deviation shock
+
+    References: Hamilton (1994), Lütkepohl (2005)
+
     Granger Causality Test:
     -----------------------
     Tests whether past values of X improve predictions of Y beyond
