@@ -814,12 +814,14 @@ def plot_smoothed_comparison(raw_df: pd.DataFrame, smoothed_df: pd.DataFrame,
         ax = axes[i]
         smoothed_col = f'{col}_smoothed'
 
-        # Raw
-        ax.plot(raw_df['date'], raw_df[col], color='#A0A0A0',
+        # Raw - drop NaN values to ensure connected line
+        raw_clean = raw_df[['date', col]].dropna()
+        ax.plot(raw_clean['date'], raw_clean[col], color='#A0A0A0',
                linewidth=0.8, alpha=0.6, label='Raw')
 
         # Smoothed - using "with Kalman Filter" terminology
-        ax.plot(smoothed_df['date'], smoothed_df[smoothed_col], color=COLORS['smoothed'],
+        smoothed_clean = smoothed_df[['date', smoothed_col]].dropna()
+        ax.plot(smoothed_clean['date'], smoothed_clean[smoothed_col], color=COLORS['smoothed'],
                linewidth=1.5, label='With Kalman Filter')
 
         ax.axhline(y=0.5, color='gray', linestyle='--', alpha=0.5)
@@ -878,12 +880,14 @@ def plot_single_fsi_kalman(raw_df: pd.DataFrame, smoothed_df: pd.DataFrame,
 
     fig, ax = plt.subplots(figsize=(14, 6))
 
-    # Raw FSI
-    ax.plot(raw_df['date'], raw_df[fsi_col], color='#A0A0A0',
+    # Raw FSI - drop NaN values to ensure connected line
+    raw_clean = raw_df[['date', fsi_col]].dropna()
+    ax.plot(raw_clean['date'], raw_clean[fsi_col], color='#A0A0A0',
            linewidth=0.8, alpha=0.6, label='Raw')
 
     # Smoothed FSI
-    ax.plot(smoothed_df['date'], smoothed_df[smoothed_col], color=COLORS['smoothed'],
+    smoothed_clean = smoothed_df[['date', smoothed_col]].dropna()
+    ax.plot(smoothed_clean['date'], smoothed_clean[smoothed_col], color=COLORS['smoothed'],
            linewidth=1.5, label='With Kalman Filter')
 
     # Add crisis shading

@@ -198,6 +198,12 @@ def load_brazil_cds() -> Optional[pd.DataFrame]:
     if cds_path.exists():
         df = pd.read_csv(cds_path)
         df['date'] = pd.to_datetime(df['date'])
+        # Ensure cds_5y is numeric
+        if df['cds_5y'].dtype == 'object':
+            df['cds_5y'] = df['cds_5y'].str.replace('.', '', regex=False)
+            df['cds_5y'] = df['cds_5y'].str.replace(',', '.', regex=False)
+        df['cds_5y'] = pd.to_numeric(df['cds_5y'], errors='coerce')
+        df = df.dropna(subset=['cds_5y'])
         df = df.sort_values('date').reset_index(drop=True)
         return df
 

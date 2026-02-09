@@ -562,8 +562,9 @@ def plot_regime_analysis(fsi: pd.Series, results: RegimeResults,
 
     # Shade crisis periods
     crisis_mask = results.smoothed_probs > 0.5
-    for i in range(len(crisis_mask)):
-        if crisis_mask[i]:
+    crisis_mask_values = crisis_mask.values  # Convert to numpy array for integer indexing
+    for i in range(len(crisis_mask_values)):
+        if crisis_mask_values[i]:
             ax1.axvspan(dates[i], dates[min(i+1, len(dates)-1)],
                        alpha=0.15, color=COLORS['crisis'])
 

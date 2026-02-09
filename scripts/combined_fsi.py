@@ -432,15 +432,25 @@ def plot_combined_fsi(combined_df: pd.DataFrame, ibov_df: pd.DataFrame = None,
         if combined_df['date'].min() <= end_dt and combined_df['date'].max() >= start_dt:
             ax1.axvspan(start_dt, end_dt, alpha=0.08, color=COLORS['crisis'])
 
-    # Plot 2: Combined FSI (0-1 scale)
+    # Plot 2: Combined FSI (0-1 scale) with smoothing
     ax2 = axes[1]
     method_display = method_name.replace('_', ' ').title()
+
+    # Add 30-day rolling mean for smoothed visualization
+    combined_smooth = combined_df['combined_fsi'].rolling(window=30, min_periods=1, center=True).mean()
+
+    # Plot raw data with low alpha
     ax2.plot(combined_df['date'], combined_df['combined_fsi'],
-             color=COLORS['combined'], linewidth=2, label=f'Combined FSI ({method_display})')
-    ax2.fill_between(combined_df['date'], 0.5, combined_df['combined_fsi'],
-                     where=combined_df['combined_fsi'] > 0.5, alpha=0.25, color=COLORS['high_stress'])
-    ax2.fill_between(combined_df['date'], 0.5, combined_df['combined_fsi'],
-                     where=combined_df['combined_fsi'] <= 0.5, alpha=0.25, color=COLORS['low_stress'])
+             color=COLORS['combined'], linewidth=0.5, alpha=0.3, label='_nolegend_')
+
+    # Plot smoothed version prominently
+    ax2.plot(combined_df['date'], combined_smooth,
+             color=COLORS['combined'], linewidth=2, label=f'Combined FSI ({method_display}, 30d MA)')
+
+    ax2.fill_between(combined_df['date'], 0.5, combined_smooth,
+                     where=combined_smooth > 0.5, alpha=0.25, color=COLORS['high_stress'])
+    ax2.fill_between(combined_df['date'], 0.5, combined_smooth,
+                     where=combined_smooth <= 0.5, alpha=0.25, color=COLORS['low_stress'])
     ax2.axhline(y=0.5, color=COLORS['neutral'], linestyle='--', alpha=0.5)
     ax2.set_ylabel('Combined FSI (0-1 scale)')
     ax2.set_ylim(0, 1)
@@ -469,13 +479,15 @@ def plot_combined_fsi(combined_df: pd.DataFrame, ibov_df: pd.DataFrame = None,
 
         ax3_twin = ax3.twinx()
 
-        # Plot News FSI if available
+        # Plot News FSI if available (with smoothing)
         if 'news_fsi' in combined_df.columns:
-            ax3_twin.plot(combined_df['date'], combined_df['news_fsi'],
+            news_smooth = combined_df['news_fsi'].rolling(window=30, min_periods=1, center=True).mean()
+            ax3_twin.plot(combined_df['date'], news_smooth,
                           color=COLORS['news_fsi'], linewidth=1.2, alpha=0.6, label='News FSI')
 
-        # Plot Combined FSI
-        ax3_twin.plot(combined_df['date'], combined_df['combined_fsi'],
+        # Plot Combined FSI (with smoothing)
+        combined_smooth = combined_df['combined_fsi'].rolling(window=30, min_periods=1, center=True).mean()
+        ax3_twin.plot(combined_df['date'], combined_smooth,
                       color=COLORS['combined'], linewidth=1.5, alpha=0.7, label='Combined FSI')
         ax3_twin.set_ylabel('FSI (0-1 scale)', color=COLORS['combined'])
         ax3_twin.set_ylim(0, 1)
