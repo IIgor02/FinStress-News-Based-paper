@@ -367,13 +367,18 @@ def calculate_ml_fsi(X: pd.DataFrame, model, scaler) -> pd.Series:
     # FSI = negative of predicted returns
     fsi_raw = -predicted_returns
 
-    return pd.Series(fsi_raw, index=X.index)
+    # Apply exponential smoothing to reduce noise
+    # span=3 means ~3-period half-life for smooth trends
+    fsi_series = pd.Series(fsi_raw, index=X.index)
+    fsi_smoothed = fsi_series.ewm(span=3, adjust=False).mean()
+
+    return fsi_smoothed
 
 
 def standardize_fsi(fsi: pd.Series, vol: pd.Series) -> pd.Series:
     """
-    Standardize FSI to 0-1 scale using percentile-based normalization.
-    Ensures median is at 0.5 for balanced distribution.
+    Standardize FSI to 0-1 scale using z-score + sigmoid transformation.
+    Creates smooth transitions and centers around 0.5.
 
     0 = minimum/no stress, 1 = maximum stress
     """
@@ -388,9 +393,18 @@ def standardize_fsi(fsi: pd.Series, vol: pd.Series) -> pd.Series:
         print(f"    Flipping FSI sign (correlation was {corr:.3f})")
         fsi = -fsi
 
-    # Use percentile-based normalization (median = 0.5)
-    # This ensures balanced distribution around 0.5
-    fsi_normalized = fsi.rank(pct=True)
+    # Z-score normalization (subtract mean, divide by std)
+    fsi_mean = fsi.mean()
+    fsi_std = fsi.std()
+    if fsi_std > 0:
+        fsi_zscore = (fsi - fsi_mean) / fsi_std
+    else:
+        fsi_zscore = fsi - fsi_mean
+
+    # Apply sigmoid transformation for smooth 0-1 scaling
+    # Scale factor controls spread: higher = more spread, lower = more compressed
+    scale = 1.5  # Moderate spread
+    fsi_normalized = 1 / (1 + np.exp(-fsi_zscore / scale))
 
     # Ensure bounded [0, 1]
     fsi_normalized = fsi_normalized.clip(0, 1)
