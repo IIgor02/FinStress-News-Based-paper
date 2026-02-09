@@ -1,0 +1,140 @@
+======================================================================
+FINANCIAL STRESS INDEX ANALYSIS REPORT
+Generated: 2026-02-09 13:53:47
+======================================================================
+
+======================================================================
+1. DATA OVERVIEW
+======================================================================
+
+Period: 2008-01-28 to 2025-12-29
+Total weeks: 736
+  Dictionary FSI: 215 observations
+  ML FSI: 214 observations
+  News FSI: 670 observations
+
+======================================================================
+2. DESCRIPTIVE STATISTICS
+======================================================================
+
+           FSI   N     Mean      Std      Min      Max   Median  Skewness  Kurtosis      IQR
+Dictionary FSI 215 0.253219 0.176094 0.000000 1.000000 0.204087  0.955245  0.696301 0.264266
+        ML FSI 214 0.506197 0.138532 0.034771 0.791241 0.518507 -0.977430  1.369500 0.153684
+      News FSI 670 0.128297 0.124325 0.000000 1.000000 0.102062  2.479723 10.021865 0.116769
+
+======================================================================
+3. CORRELATION ANALYSIS
+======================================================================
+
+3.1 Inter-FSI Correlations:
+----------------------------------------
+  Dictionary FSI vs ML FSI: r = -0.235
+  Dictionary FSI vs News FSI: r = 0.309
+  ML FSI vs News FSI: r = -0.097
+
+3.2 Correlation with IBOVESPA Volatility:
+----------------------------------------
+  Dictionary FSI:
+    Pearson:  r = 0.700 (p = 0.0000) ***
+    Spearman: r = 0.670 (p = 0.0000)
+    N = 215
+  ML FSI:
+    Pearson:  r = -0.207 (p = 0.0023) **
+    Spearman: r = -0.156 (p = 0.0224)
+    N = 214
+  News FSI:
+    Pearson:  r = 0.332 (p = 0.0000) ***
+    Spearman: r = 0.379 (p = 0.0000)
+    N = 670
+
+======================================================================
+4. CRISIS PERIOD ANALYSIS
+======================================================================
+
+Mean FSI levels during historical crises:
+----------------------------------------
+
+  Global Financial Crisis (2008-09-15 to 2009-03-31):
+    Weeks: 14
+    Dictionary FSI: 0.386
+    ML FSI: 0.501
+    News FSI: 0.183
+
+  Petrobras Scandal Begins (2014-09-01 to 2014-12-31):
+    Weeks: 18
+    Dictionary FSI: 0.166
+    ML FSI: 0.547
+    News FSI: 0.070
+
+  Brazilian Recession / Dilma Impeachment (2015-04-01 to 2016-08-31):
+    Weeks: 53
+    Dictionary FSI: 0.201
+    ML FSI: 0.526
+    News FSI: 0.065
+
+  JBS Scandal (Joesley Day) (2017-05-17 to 2017-06-30):
+    Weeks: 6
+    Dictionary FSI: 0.103
+    ML FSI: 0.651
+    News FSI: 0.243
+
+  Truckers Strike (2018-05-21 to 2018-06-10):
+    Weeks: 1
+    Dictionary FSI: 0.185
+    ML FSI: 0.480
+    News FSI: nan
+
+  COVID-19 Crash (2020-02-21 to 2020-04-30):
+    Weeks: 7
+    Dictionary FSI: 0.760
+    ML FSI: 0.399
+    News FSI: 0.348
+
+  Fiscal Concerns (PEC dos Precatórios) (2021-09-01 to 2021-12-31):
+    Weeks: 17
+    Dictionary FSI: 0.378
+    ML FSI: 0.500
+    News FSI: 0.161
+
+  Election Uncertainty (2022-09-01 to 2022-11-15):
+    Weeks: 11
+    Dictionary FSI: 0.629
+    ML FSI: 0.572
+    News FSI: 0.148
+
+  January 8 Events (2023-01-08 to 2023-01-15):
+    Weeks: 1
+    Dictionary FSI: nan
+    ML FSI: nan
+    News FSI: 0.082
+
+  Fiscal Framework Concerns (2024-04-01 to 2024-05-31):
+    Weeks: 9
+    Dictionary FSI: 0.475
+    ML FSI: 0.441
+    News FSI: 0.331
+
+======================================================================
+5. INTERPRETATION GUIDE
+======================================================================
+
+FSI Scale (0-1):
+  0.0 - 0.2: Very low stress (calm market conditions)
+  0.2 - 0.4: Low stress (below average)
+  0.4 - 0.6: Moderate stress (around neutral)
+  0.6 - 0.8: High stress (above average)
+  0.8 - 1.0: Very high stress (crisis conditions)
+
+Methodology Notes:
+  - Dictionary FSI: Uses pre-defined stress-related Google Trends queries
+  - ML FSI: Uses LASSO regression to identify predictive queries
+  - News FSI: Uses financial news article analysis
+
+Correlation Interpretation:
+  *** p < 0.001 (highly significant)
+  **  p < 0.01  (very significant)
+  *   p < 0.05  (significant)
+
+======================================================================
+END OF REPORT
+======================================================================

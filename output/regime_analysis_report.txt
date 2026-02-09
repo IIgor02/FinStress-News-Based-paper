@@ -1,0 +1,94 @@
+======================================================================
+MARKOV SWITCHING REGIME ANALYSIS REPORT
+Generated: 2026-02-09 16:40:13
+======================================================================
+
+======================================================================
+1. MODEL SPECIFICATION
+======================================================================
+
+    Model: Two-Regime Markov Switching Model (Hamilton, 1989)
+
+    Observation equation:
+        y_t = μ_{S_t} + σ_{S_t} * ε_t,    ε_t ~ N(0, 1)
+
+    Where S_t ∈ {0, 1} follows a first-order Markov chain.
+
+    Estimation: Maximum Likelihood (EM algorithm)
+    
+
+======================================================================
+2. REGIME PARAMETERS
+======================================================================
+
+  CALM REGIME (S=0):
+    Mean (μ₀):           0.1729
+    Std Dev (σ₀):        0.0382
+    Expected Duration:   32.2 weeks
+
+  CRISIS REGIME (S=1):
+    Mean (μ₁):           0.3098
+    Std Dev (σ₁):        0.0688
+    Expected Duration:   34.4 weeks
+
+======================================================================
+3. TRANSITION PROBABILITY MATRIX
+======================================================================
+
+    P = | P(Calm→Calm)   P(Calm→Crisis)  |
+        | P(Crisis→Calm) P(Crisis→Crisis)|
+    
+    P = | 0.9689  0.0291 |
+        | 0.0311  0.9709 |
+
+======================================================================
+4. MODEL FIT
+======================================================================
+    Observations:     1054
+    Log-Likelihood:   1436.69
+    AIC:              -2861.38
+    BIC:              -2831.62
+
+======================================================================
+5. HISTORICAL CRISIS DETECTION
+======================================================================
+
+                                 Crisis Known_Start  Known_End Detected Detected_Start Detected_End  Overlap_Days Mean_Prob
+                Global Financial Crisis  2008-09-15 2009-03-31       No           None         None             0      None
+               Petrobras Scandal Begins  2014-09-01 2014-12-31       No           None         None             0      None
+Brazilian Recession / Dilma Impeachment  2015-04-01 2016-08-31       No           None         None             0      None
+              JBS Scandal (Joesley Day)  2017-05-17 2017-06-30       No           None         None             0      None
+                        Truckers Strike  2018-05-21 2018-06-10       No           None         None             0      None
+                         COVID-19 Crash  2020-02-21 2020-04-30       No           None         None             0      None
+  Fiscal Concerns (PEC dos Precatórios)  2021-09-01 2021-12-31       No           None         None             0      None
+                   Election Uncertainty  2022-09-01 2022-11-15       No           None         None             0      None
+                       January 8 Events  2023-01-08 2023-01-15       No           None         None             0      None
+              Fiscal Framework Concerns  2024-04-01 2024-05-31       No           None         None             0      None
+
+    Detection rate: 0/10 (0.0%)
+
+======================================================================
+6. INTERPRETATION
+======================================================================
+
+    The Markov Switching Model identifies two distinct regimes:
+
+    1. CALM REGIME:
+       - Mean FSI: 0.173 (lower stress)
+       - Volatility: 0.038
+       - Tends to persist for ~32 weeks on average
+
+    2. CRISIS REGIME:
+       - Mean FSI: 0.310 (higher stress)
+       - Volatility: 0.069
+       - Tends to persist for ~34 weeks on average
+
+    The smoothed probabilities provide the optimal estimate of being in each
+    regime at each point in time, conditioning on all available data.
+
+    High crisis probability (>0.7) indicates elevated financial stress with
+    high confidence. These periods should align with known economic crises.
+    
+======================================================================
+END OF REPORT
+======================================================================

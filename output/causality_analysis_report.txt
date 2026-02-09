@@ -1,0 +1,224 @@
+======================================================================
+GRANGER CAUSALITY AND IMPULSE RESPONSE ANALYSIS
+Generated: 2026-02-09 18:25:10
+======================================================================
+
+======================================================================
+1. METHODOLOGY
+======================================================================
+
+    Data Transformations (Following Econometric Best Practices):
+    ------------------------------------------------------------
+    - CDS: Transformed to log-returns (ensures stationarity)
+      Original CDS levels are non-stationary (ADF p~0.09), which can
+      produce spurious results. Log-returns are stationary.
+
+    - Volatility: Transformed to log scale (stabilizes variance)
+
+    - FSI indices: No transformation (already bounded/stationary)
+
+    - All variables: Standardized (mean=0, std=1) so IRF shows
+      response to one-standard-deviation shock
+
+    References: Hamilton (1994), Lütkepohl (2005)
+
+    Granger Causality Test:
+    -----------------------
+    Tests whether past values of X improve predictions of Y beyond
+    what past values of Y alone provide.
+
+    H0: X does not Granger-cause Y
+    H1: X Granger-causes Y
+
+    Significance levels: * p<0.10, ** p<0.05, *** p<0.01
+
+    Vector Autoregression (VAR):
+    ----------------------------
+    Y_t = c + Σ(A_i * Y_{t-i}) + ε_t
+
+    Lag selection: Akaike Information Criterion (AIC)
+
+    Impulse Response Functions:
+    ---------------------------
+    Show how a one-standard-deviation shock to variable X affects
+    all variables over time (orthogonalized using Cholesky decomposition).
+    
+
+======================================================================
+2. STATIONARITY TESTS (ADF)
+======================================================================
+
+        name   adf_stat      p_value  lags_used  n_obs  critical_1%  critical_5%  critical_10%  stationary
+    dict_fsi  -1.167346 6.874827e-01         15    198    -3.463815    -2.876251     -2.574611       False
+      ml_fsi  -5.614546 1.182560e-06          1    211    -3.461727    -2.875337     -2.574124        True
+    news_fsi  -6.782698 2.476270e-09          4    663    -3.440252    -2.865909     -2.569097        True
+combined_fsi  -5.358134 4.144984e-06         12    721    -3.439452    -2.865557     -2.568909        True
+  volatility  -5.840778 3.781988e-07          6    927    -3.437424    -2.864663     -2.568433        True
+      cds_5y -20.790210 0.000000e+00          1    938    -3.437341    -2.864626     -2.568413        True
+ cds_log_ret -20.790210 0.000000e+00          1    938    -3.437341    -2.864626     -2.568413        True
+   cds_level  -3.441578 9.620550e-03          6    933    -3.437378    -2.864643     -2.568422        True
+   vol_level  -5.595830 1.297747e-06         10    923    -3.437455    -2.864676     -2.568440        True
+
+  Warning: Non-stationary series: ['dict_fsi']
+  Consider differencing or using error-correction models.
+
+======================================================================
+3. GRANGER CAUSALITY RESULTS
+======================================================================
+
+       Cause       Effect  Min_P_Value  Best_Lag  Significant_5%  Significant_1%
+    dict_fsi       ml_fsi 3.653881e-02         3            True           False
+    dict_fsi     news_fsi 3.597860e-03         1            True            True
+    dict_fsi combined_fsi 3.448910e-05         4            True            True
+    dict_fsi   volatility 5.410327e-11         4            True            True
+    dict_fsi       cds_5y 6.504980e-02         3           False           False
+    dict_fsi  cds_log_ret 6.504980e-02         3           False           False
+    dict_fsi    cds_level 1.265484e-02         2            True           False
+    dict_fsi    vol_level 1.859772e-17         4            True            True
+      ml_fsi     dict_fsi 5.675264e-01         4           False           False
+      ml_fsi     news_fsi 7.045795e-01         2           False           False
+      ml_fsi combined_fsi 5.072512e-03         2            True            True
+      ml_fsi   volatility 5.019263e-03         2            True            True
+      ml_fsi       cds_5y 8.656377e-02         1           False           False
+      ml_fsi  cds_log_ret 8.656377e-02         1           False           False
+      ml_fsi    cds_level 3.287316e-03         1            True            True
+      ml_fsi    vol_level 2.115814e-06         2            True            True
+    news_fsi     dict_fsi 1.030691e-01         1           False           False
+    news_fsi       ml_fsi 1.414671e-01         3           False           False
+    news_fsi combined_fsi 1.230193e-35         3            True            True
+    news_fsi   volatility 2.340091e-03         4            True            True
+    news_fsi       cds_5y 1.844469e-02         3            True           False
+    news_fsi  cds_log_ret 1.844469e-02         3            True           False
+    news_fsi    cds_level 9.244371e-02         4           False           False
+    news_fsi    vol_level 9.304655e-02         4           False           False
+combined_fsi     dict_fsi 5.239118e-01         2           False           False
+combined_fsi       ml_fsi 5.287169e-01         2           False           False
+combined_fsi     news_fsi 7.091377e-02         3           False           False
+combined_fsi   volatility 2.152197e-02         4            True           False
+combined_fsi       cds_5y 5.928147e-02         4           False           False
+combined_fsi  cds_log_ret 5.928147e-02         4           False           False
+combined_fsi    cds_level 4.902282e-01         4           False           False
+combined_fsi    vol_level 2.923716e-02         4            True           False
+  volatility     dict_fsi 1.210249e-02         3            True           False
+  volatility       ml_fsi 5.641744e-03         1            True            True
+  volatility     news_fsi 6.974074e-04         4            True            True
+  volatility combined_fsi 3.096105e-01         2           False           False
+  volatility       cds_5y 1.906118e-01         3           False           False
+  volatility  cds_log_ret 1.906118e-01         3           False           False
+  volatility    cds_level 2.980897e-02         1            True           False
+  volatility    vol_level 3.239966e-03         2            True            True
+      cds_5y     dict_fsi 4.844275e-01         2           False           False
+      cds_5y       ml_fsi 3.326172e-01         1           False           False
+      cds_5y     news_fsi 2.898407e-01         1           False           False
+      cds_5y combined_fsi 2.037336e-02         2            True           False
+      cds_5y   volatility 2.287392e-12         4            True            True
+      cds_5y  cds_log_ret 1.000000e+00         1           False           False
+      cds_5y    cds_level 6.800509e-18         4            True            True
+      cds_5y    vol_level 1.512469e-25         4            True            True
+ cds_log_ret     dict_fsi 4.844275e-01         2           False           False
+ cds_log_ret       ml_fsi 3.326172e-01         1           False           False
+ cds_log_ret     news_fsi 2.898407e-01         1           False           False
+ cds_log_ret combined_fsi 2.037336e-02         2            True           False
+ cds_log_ret   volatility 2.287392e-12         4            True            True
+ cds_log_ret       cds_5y 1.000000e+00         1           False           False
+ cds_log_ret    cds_level 6.800509e-18         4            True            True
+ cds_log_ret    vol_level 1.512469e-25         4            True            True
+   cds_level     dict_fsi 2.965092e-01         1           False           False
+   cds_level       ml_fsi 1.474135e-03         3            True            True
+   cds_level     news_fsi 1.876398e-01         4           False           False
+   cds_level combined_fsi 8.667949e-03         3            True            True
+   cds_level   volatility 2.496254e-07         4            True            True
+   cds_level       cds_5y 1.903732e-12         3            True            True
+   cds_level  cds_log_ret 1.903732e-12         3            True            True
+   cds_level    vol_level 1.196444e-17         4            True            True
+   vol_level     dict_fsi 1.782684e-02         3            True           False
+   vol_level       ml_fsi 4.358922e-04         1            True            True
+   vol_level     news_fsi 6.221626e-06         4            True            True
+   vol_level combined_fsi 9.021221e-02         1           False           False
+   vol_level   volatility 2.151598e-02         2            True           False
+   vol_level       cds_5y 1.317681e-01         4           False           False
+   vol_level  cds_log_ret 1.317681e-01         4           False           False
+   vol_level    cds_level 9.895463e-03         3            True            True
+
+
+Significant Causal Relationships:
+----------------------------------------
+
+  *** Highly Significant (p < 0.01):
+      dict_fsi → news_fsi (p=0.0036, lag=1)
+      dict_fsi → combined_fsi (p=0.0000, lag=4)
+      dict_fsi → volatility (p=0.0000, lag=4)
+      dict_fsi → vol_level (p=0.0000, lag=4)
+      ml_fsi → combined_fsi (p=0.0051, lag=2)
+      ml_fsi → volatility (p=0.0050, lag=2)
+      ml_fsi → cds_level (p=0.0033, lag=1)
+      ml_fsi → vol_level (p=0.0000, lag=2)
+      news_fsi → combined_fsi (p=0.0000, lag=3)
+      news_fsi → volatility (p=0.0023, lag=4)
+      volatility → ml_fsi (p=0.0056, lag=1)
+      volatility → news_fsi (p=0.0007, lag=4)
+      volatility → vol_level (p=0.0032, lag=2)
+      cds_5y → volatility (p=0.0000, lag=4)
+      cds_5y → cds_level (p=0.0000, lag=4)
+      cds_5y → vol_level (p=0.0000, lag=4)
+      cds_log_ret → volatility (p=0.0000, lag=4)
+      cds_log_ret → cds_level (p=0.0000, lag=4)
+      cds_log_ret → vol_level (p=0.0000, lag=4)
+      cds_level → ml_fsi (p=0.0015, lag=3)
+      cds_level → combined_fsi (p=0.0087, lag=3)
+      cds_level → volatility (p=0.0000, lag=4)
+      cds_level → cds_5y (p=0.0000, lag=3)
+      cds_level → cds_log_ret (p=0.0000, lag=3)
+      cds_level → vol_level (p=0.0000, lag=4)
+      vol_level → ml_fsi (p=0.0004, lag=1)
+      vol_level → news_fsi (p=0.0000, lag=4)
+      vol_level → cds_level (p=0.0099, lag=3)
+
+  ** Significant (p < 0.05):
+      dict_fsi → ml_fsi (p=0.0365, lag=3)
+      dict_fsi → cds_level (p=0.0127, lag=2)
+      news_fsi → cds_5y (p=0.0184, lag=3)
+      news_fsi → cds_log_ret (p=0.0184, lag=3)
+      combined_fsi → volatility (p=0.0215, lag=4)
+      combined_fsi → vol_level (p=0.0292, lag=4)
+      volatility → dict_fsi (p=0.0121, lag=3)
+      volatility → cds_level (p=0.0298, lag=1)
+      cds_5y → combined_fsi (p=0.0204, lag=2)
+      cds_log_ret → combined_fsi (p=0.0204, lag=2)
+      vol_level → dict_fsi (p=0.0178, lag=3)
+      vol_level → volatility (p=0.0215, lag=2)
+
+======================================================================
+4. VAR MODEL SUMMARY
+======================================================================
+
+  Optimal lag (AIC): 6
+  Observations: 728
+  AIC: -2.52
+  BIC: -2.16
+
+======================================================================
+5. INTERPRETATION
+======================================================================
+
+    Key findings from Granger causality analysis:
+
+    1. If FSI Granger-causes market indicators (volatility, CDS), then
+       FSI contains predictive information about future market stress.
+
+    2. If market indicators Granger-cause FSI, then markets lead the
+       text-based stress measures (possible efficiency concern).
+
+    3. Bidirectional causality suggests feedback loops between text-based
+       stress perception and market outcomes.
+
+    4. No causality suggests independence or contemporaneous relationships
+       not captured by Granger tests.
+
+    The impulse response functions show how shocks propagate through
+    the system over time, providing insights into the dynamics of
+    financial stress transmission.
+    
+======================================================================
+END OF REPORT
+======================================================================
