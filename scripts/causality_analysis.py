@@ -530,6 +530,391 @@ def full_granger_analysis(df: pd.DataFrame, variables: List[str],
 
 
 # =============================================================================
+# LOCAL PROJECTIONS IRF (Jordà 2005) - ROBUST TO PERSISTENCE
+# =============================================================================
+
+def local_projection_irf(df: pd.DataFrame, shock_var: str, response_var: str,
+                         max_horizon: int = 20, n_lags: int = 4,
+                         control_vars: List[str] = None) -> Dict:
+    """
+    Compute Impulse Response Function using Local Projections (Jordà, 2005).
+
+    Local Projections are more robust than VAR-based IRF because:
+    1. They don't require correct specification of the full system
+    2. They work well with highly persistent (near unit-root) variables
+    3. They directly estimate the response at each horizon
+
+    Model for each horizon h:
+        y_{t+h} = α_h + β_h * shock_t + Σ(γ_k * y_{t-k}) + Σ(δ_k * x_{t-k}) + ε_{t+h}
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Data with shock and response variables
+    shock_var : str
+        Variable that receives the shock
+    response_var : str
+        Variable whose response we measure
+    max_horizon : int
+        Maximum horizon for IRF (default: 20 periods)
+    n_lags : int
+        Number of lags to include as controls
+    control_vars : list
+        Additional control variables
+
+    Returns
+    -------
+    dict with keys: 'horizons', 'irf', 'lower', 'upper', 'pvalues'
+
+    References
+    ----------
+    Jordà, Ò. (2005). Estimation and Inference of Impulse Responses by Local Projections.
+    American Economic Review, 95(1), 161-182.
+    """
+    # Prepare data - use LEVELS (not log-returns) for persistent variables
+    data = df[[shock_var, response_var]].copy()
+
+    if control_vars:
+        for cv in control_vars:
+            if cv in df.columns and cv not in [shock_var, response_var]:
+                data[cv] = df[cv]
+
+    data = data.dropna()
+
+    if len(data) < max_horizon + n_lags + 10:
+        return None
+
+    # Standardize for comparability
+    for col in data.columns:
+        data[col] = (data[col] - data[col].mean()) / data[col].std()
+
+    # Results storage
+    horizons = list(range(max_horizon + 1))
+    irf_values = []
+    lower_ci = []
+    upper_ci = []
+    pvalues = []
+
+    for h in horizons:
+        # Dependent variable: response at t+h
+        y = data[response_var].shift(-h)
+
+        # Regressors: shock at t, plus lagged controls
+        X_cols = [shock_var]
+
+        # Add lagged values of response and shock as controls
+        for lag in range(1, n_lags + 1):
+            lag_col_y = f'{response_var}_lag{lag}'
+            lag_col_x = f'{shock_var}_lag{lag}'
+            data[lag_col_y] = data[response_var].shift(lag)
+            data[lag_col_x] = data[shock_var].shift(lag)
+            X_cols.extend([lag_col_y, lag_col_x])
+
+        # Add control variables and their lags
+        if control_vars:
+            for cv in control_vars:
+                if cv in data.columns:
+                    X_cols.append(cv)
+                    for lag in range(1, n_lags + 1):
+                        lag_col = f'{cv}_lag{lag}'
+                        data[lag_col] = data[cv].shift(lag)
+                        X_cols.append(lag_col)
+
+        # Remove duplicates
+        X_cols = list(dict.fromkeys(X_cols))
+
+        # Build design matrix
+        X = data[X_cols].copy()
+        X = sm.add_constant(X)
+
+        # Align and drop NaN
+        valid_idx = ~(y.isna() | X.isna().any(axis=1))
+        y_clean = y[valid_idx]
+        X_clean = X[valid_idx]
+
+        if len(y_clean) < len(X_cols) + 5:
+            irf_values.append(np.nan)
+            lower_ci.append(np.nan)
+            upper_ci.append(np.nan)
+            pvalues.append(np.nan)
+            continue
+
+        try:
+            # OLS with HAC standard errors (Newey-West) for autocorrelation
+            model = sm.OLS(y_clean, X_clean)
+            # Use HAC standard errors with bandwidth = h+1 for horizon h
+            results = model.fit(cov_type='HAC', cov_kwds={'maxlags': max(1, h)})
+
+            # Extract coefficient on shock variable
+            coef = results.params[shock_var]
+            se = results.bse[shock_var]
+            pval = results.pvalues[shock_var]
+
+            # 95% confidence interval
+            irf_values.append(coef)
+            lower_ci.append(coef - 1.96 * se)
+            upper_ci.append(coef + 1.96 * se)
+            pvalues.append(pval)
+
+        except Exception:
+            irf_values.append(np.nan)
+            lower_ci.append(np.nan)
+            upper_ci.append(np.nan)
+            pvalues.append(np.nan)
+
+    return {
+        'horizons': np.array(horizons),
+        'irf': np.array(irf_values),
+        'lower': np.array(lower_ci),
+        'upper': np.array(upper_ci),
+        'pvalues': np.array(pvalues),
+        'shock_var': shock_var,
+        'response_var': response_var,
+    }
+
+
+def plot_local_projection_irf(df: pd.DataFrame, output_path: Path = None):
+    """
+    Create comprehensive IRF plots using Local Projections method.
+
+    This is more robust than VAR-based IRF for persistent financial variables.
+    """
+    if not MATPLOTLIB_AVAILABLE:
+        return
+
+    # Define shock-response pairs to analyze
+    fsi_vars = ['dict_fsi', 'ml_fsi', 'combined_fsi']
+    market_vars = ['volatility', 'cds_5y']
+
+    # Filter to available variables - use original levels
+    available_fsi = [f for f in fsi_vars if f in df.columns]
+    available_market = [m for m in market_vars if m in df.columns]
+
+    if not available_fsi or not available_market:
+        print("  Insufficient data for LP-IRF analysis")
+        return
+
+    # We need to use LEVEL data, not transformed data
+    # Reload original data for LP analysis
+    fsi_df = pd.read_csv(OUTPUT_DIR / 'combined_fsi.csv')
+    fsi_df['date'] = pd.to_datetime(fsi_df['date'])
+    fsi_df['week'] = fsi_df['date'].dt.to_period('W').dt.start_time
+    fsi_weekly = fsi_df.groupby('week').mean(numeric_only=True).reset_index()
+    fsi_weekly = fsi_weekly.rename(columns={'week': 'date'})
+
+    # Load CDS levels
+    cds_path = _PROJECT_DIR / 'Brasil CDS 5 Anos USD - Visão Geral.csv'
+    if cds_path.exists():
+        cds_df = pd.read_csv(cds_path, encoding='utf-8-sig')
+        cds_df = cds_df.rename(columns={'Data': 'date', 'Último': 'cds_5y'})
+        cds_df['date'] = pd.to_datetime(cds_df['date'], format='%d.%m.%Y')
+        cds_df['cds_5y'] = cds_df['cds_5y'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+        cds_df['cds_5y'] = pd.to_numeric(cds_df['cds_5y'], errors='coerce')
+        cds_df['week'] = cds_df['date'].dt.to_period('W').dt.start_time
+        cds_weekly = cds_df.groupby('week')['cds_5y'].mean().reset_index()
+        cds_weekly = cds_weekly.rename(columns={'week': 'date'})
+    else:
+        cds_weekly = None
+
+    # Load volatility levels
+    ibov_path = DATA_DIR / 'ibovespa_data.csv'
+    if ibov_path.exists():
+        ibov_df = pd.read_csv(ibov_path)
+        ibov_df['date'] = pd.to_datetime(ibov_df['date'], utc=True).dt.tz_localize(None)
+        ibov_df['week'] = ibov_df['date'].dt.to_period('W').dt.start_time
+        vol_weekly = ibov_df.groupby('week')['realized_vol_21d'].mean().reset_index()
+        vol_weekly = vol_weekly.rename(columns={'week': 'date', 'realized_vol_21d': 'volatility'})
+    else:
+        vol_weekly = None
+
+    # Merge level data
+    level_data = fsi_weekly.copy()
+    if vol_weekly is not None:
+        level_data = level_data.merge(vol_weekly, on='date', how='outer')
+    if cds_weekly is not None:
+        level_data = level_data.merge(cds_weekly, on='date', how='outer')
+
+    level_data = level_data.sort_values('date')
+    level_data = level_data[level_data['date'] >= ANALYSIS_START_DATE].dropna()
+
+    print(f"  LP-IRF using {len(level_data)} observations (level data)")
+
+    # Update available variables based on level_data
+    available_fsi = [f for f in fsi_vars if f in level_data.columns]
+    available_market = [m for m in ['volatility', 'cds_5y'] if m in level_data.columns]
+
+    n_fsi = len(available_fsi)
+    n_market = len(available_market)
+
+    # Create figure: FSI as leading indicator (FSI shock → Market response)
+    fig, axes = plt.subplots(n_market, n_fsi, figsize=(4.5*n_fsi, 4*n_market))
+
+    max_horizon = 20
+
+    for i, response in enumerate(available_market):
+        for j, shock in enumerate(available_fsi):
+            ax = axes[i, j] if n_market > 1 and n_fsi > 1 else (axes[j] if n_market == 1 else axes[i])
+
+            # Compute LP-IRF
+            result = local_projection_irf(level_data, shock, response,
+                                          max_horizon=max_horizon, n_lags=4)
+
+            if result is not None and not np.all(np.isnan(result['irf'])):
+                h = result['horizons']
+                irf = result['irf']
+                lower = result['lower']
+                upper = result['upper']
+                pvals = result['pvalues']
+
+                # Plot confidence interval
+                ax.fill_between(h, lower, upper, alpha=0.2, color='gray')
+
+                # Plot IRF line
+                ax.plot(h, irf, color='black', linewidth=1.5)
+
+                # Add significance markers
+                sig_5 = pvals < 0.05
+                sig_10 = (pvals < 0.10) & ~sig_5
+                ax.scatter(h[sig_5], irf[sig_5], color='black', s=20, zorder=5)
+
+                # Check if significant at any horizon in first 8 weeks
+                early_sig = np.any(pvals[:8] < 0.05)
+                sig_marker = '*' if early_sig else ''
+            else:
+                ax.text(0.5, 0.5, 'N/A', ha='center', va='center', transform=ax.transAxes)
+                sig_marker = ''
+
+            ax.axhline(y=0, color='gray', linestyle='--', linewidth=0.5)
+
+            # Labels
+            shock_label = shock.replace('_', ' ').replace('fsi', 'FSI').title()
+            response_label = response.replace('_', ' ').replace('5y', '5Y').title()
+            ax.set_title(f'{shock_label} → {response_label}{sig_marker}', fontsize=10)
+
+            if i == n_market - 1:
+                ax.set_xlabel('Weeks')
+            if j == 0:
+                ax.set_ylabel('Response (std. dev.)')
+
+    plt.suptitle('Local Projections IRF: Market Response to FSI Shocks\n(Robust method for persistent variables; * significant at 5%)',
+                 fontsize=11)
+    plt.tight_layout()
+
+    if output_path:
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        print(f"  Saved: {output_path}")
+    plt.close()
+
+
+def plot_lp_irf_reverse(df: pd.DataFrame, output_path: Path = None):
+    """
+    Create LP-IRF plots for reverse direction: Market shock → FSI response.
+    """
+    if not MATPLOTLIB_AVAILABLE:
+        return
+
+    fsi_vars = ['dict_fsi', 'ml_fsi', 'combined_fsi']
+    market_vars = ['volatility', 'cds_5y']
+
+    # Reload level data (same as above)
+    fsi_df = pd.read_csv(OUTPUT_DIR / 'combined_fsi.csv')
+    fsi_df['date'] = pd.to_datetime(fsi_df['date'])
+    fsi_df['week'] = fsi_df['date'].dt.to_period('W').dt.start_time
+    fsi_weekly = fsi_df.groupby('week').mean(numeric_only=True).reset_index()
+    fsi_weekly = fsi_weekly.rename(columns={'week': 'date'})
+
+    cds_path = _PROJECT_DIR / 'Brasil CDS 5 Anos USD - Visão Geral.csv'
+    if cds_path.exists():
+        cds_df = pd.read_csv(cds_path, encoding='utf-8-sig')
+        cds_df = cds_df.rename(columns={'Data': 'date', 'Último': 'cds_5y'})
+        cds_df['date'] = pd.to_datetime(cds_df['date'], format='%d.%m.%Y')
+        cds_df['cds_5y'] = cds_df['cds_5y'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+        cds_df['cds_5y'] = pd.to_numeric(cds_df['cds_5y'], errors='coerce')
+        cds_df['week'] = cds_df['date'].dt.to_period('W').dt.start_time
+        cds_weekly = cds_df.groupby('week')['cds_5y'].mean().reset_index()
+        cds_weekly = cds_weekly.rename(columns={'week': 'date'})
+    else:
+        cds_weekly = None
+
+    ibov_path = DATA_DIR / 'ibovespa_data.csv'
+    if ibov_path.exists():
+        ibov_df = pd.read_csv(ibov_path)
+        ibov_df['date'] = pd.to_datetime(ibov_df['date'], utc=True).dt.tz_localize(None)
+        ibov_df['week'] = ibov_df['date'].dt.to_period('W').dt.start_time
+        vol_weekly = ibov_df.groupby('week')['realized_vol_21d'].mean().reset_index()
+        vol_weekly = vol_weekly.rename(columns={'week': 'date', 'realized_vol_21d': 'volatility'})
+    else:
+        vol_weekly = None
+
+    level_data = fsi_weekly.copy()
+    if vol_weekly is not None:
+        level_data = level_data.merge(vol_weekly, on='date', how='outer')
+    if cds_weekly is not None:
+        level_data = level_data.merge(cds_weekly, on='date', how='outer')
+
+    level_data = level_data.sort_values('date')
+    level_data = level_data[level_data['date'] >= ANALYSIS_START_DATE].dropna()
+
+    available_fsi = [f for f in fsi_vars if f in level_data.columns]
+    available_market = [m for m in ['volatility', 'cds_5y'] if m in level_data.columns]
+
+    n_fsi = len(available_fsi)
+    n_market = len(available_market)
+
+    # Create figure: Market shock → FSI response
+    fig, axes = plt.subplots(n_market, n_fsi, figsize=(4.5*n_fsi, 4*n_market))
+
+    max_horizon = 20
+
+    for i, shock in enumerate(available_market):
+        for j, response in enumerate(available_fsi):
+            ax = axes[i, j] if n_market > 1 and n_fsi > 1 else (axes[j] if n_market == 1 else axes[i])
+
+            # Compute LP-IRF
+            result = local_projection_irf(level_data, shock, response,
+                                          max_horizon=max_horizon, n_lags=4)
+
+            if result is not None and not np.all(np.isnan(result['irf'])):
+                h = result['horizons']
+                irf = result['irf']
+                lower = result['lower']
+                upper = result['upper']
+                pvals = result['pvalues']
+
+                ax.fill_between(h, lower, upper, alpha=0.2, color='gray')
+                ax.plot(h, irf, color='black', linewidth=1.5)
+
+                sig_5 = pvals < 0.05
+                ax.scatter(h[sig_5], irf[sig_5], color='black', s=20, zorder=5)
+
+                early_sig = np.any(pvals[:8] < 0.05)
+                sig_marker = '*' if early_sig else ''
+            else:
+                ax.text(0.5, 0.5, 'N/A', ha='center', va='center', transform=ax.transAxes)
+                sig_marker = ''
+
+            ax.axhline(y=0, color='gray', linestyle='--', linewidth=0.5)
+
+            shock_label = shock.replace('_', ' ').replace('5y', '5Y').title()
+            response_label = response.replace('_', ' ').replace('fsi', 'FSI').title()
+            ax.set_title(f'{shock_label} → {response_label}{sig_marker}', fontsize=10)
+
+            if i == n_market - 1:
+                ax.set_xlabel('Weeks')
+            if j == 0:
+                ax.set_ylabel('Response (std. dev.)')
+
+    plt.suptitle('Local Projections IRF: FSI Response to Market Shocks\n(Robust method for persistent variables; * significant at 5%)',
+                 fontsize=11)
+    plt.tight_layout()
+
+    if output_path:
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        print(f"  Saved: {output_path}")
+    plt.close()
+
+
+# =============================================================================
 # VAR MODEL AND IRF
 # =============================================================================
 
@@ -1189,6 +1574,21 @@ def main():
     # FSI as leading indicator analysis
     print("\nComputing FSI as leading indicator IRFs...")
     plot_fsi_as_leading_indicator(df, PLOTS_DIR / 'irf_fsi_leading.png')
+
+    # =========================================================================
+    # LOCAL PROJECTIONS IRF (Jordà 2005) - More robust for persistent variables
+    # =========================================================================
+    print("\n" + "=" * 70)
+    print("LOCAL PROJECTIONS IRF (Jordà 2005)")
+    print("=" * 70)
+    print("  Note: LP-IRF is more robust than VAR-IRF for persistent financial variables")
+    print("  Using LEVEL data (not log-returns) to capture economic relationships")
+
+    print("\nComputing LP-IRF: FSI → Market (FSI as leading indicator)...")
+    plot_local_projection_irf(df, PLOTS_DIR / 'lp_irf_fsi_to_market.png')
+
+    print("\nComputing LP-IRF: Market → FSI (Market feedback to FSI)...")
+    plot_lp_irf_reverse(df, PLOTS_DIR / 'lp_irf_market_to_fsi.png')
 
     print("\n" + "=" * 70)
     print("CAUSALITY ANALYSIS COMPLETE")
