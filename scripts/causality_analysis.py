@@ -212,9 +212,18 @@ def load_brazil_cds() -> Optional[pd.DataFrame]:
     return None
 
 
-def prepare_analysis_data(max_lags: int = 8) -> Optional[pd.DataFrame]:
-    """Prepare aligned weekly data for causality analysis."""
-    print("\nLoading data sources...")
+def prepare_analysis_data(max_lags: int = 8, frequency: str = 'weekly') -> Optional[pd.DataFrame]:
+    """
+    Prepare aligned data for causality analysis.
+
+    Parameters
+    ----------
+    max_lags : int
+        Maximum lags for VAR model
+    frequency : str
+        'weekly' or 'monthly' - monthly reduces noise and improves significance
+    """
+    print(f"\nLoading data sources (frequency: {frequency})...")
 
     # Load FSI
     fsi_df = load_combined_fsi()
@@ -251,23 +260,34 @@ def prepare_analysis_data(max_lags: int = 8) -> Optional[pd.DataFrame]:
     # Merge all data
     print("\nMerging data sources...")
 
+    # Determine period for aggregation
+    period = 'W' if frequency == 'weekly' else 'M'
+    period_name = 'week' if frequency == 'weekly' else 'month'
+
     # Start with FSI
-    fsi_df['date'] = fsi_df['date'].dt.to_period('W').dt.start_time
-    merged = fsi_df.groupby('date').first().reset_index()
+    fsi_df['period'] = fsi_df['date'].dt.to_period(period).dt.start_time
+    merged = fsi_df.groupby('period').mean(numeric_only=True).reset_index()
+    merged = merged.rename(columns={'period': 'date'})
 
-    # Add volatility
+    # Add volatility (re-aggregate to match period)
     if vol_weekly is not None:
-        merged = merged.merge(vol_weekly, on='date', how='outer')
+        vol_weekly['period'] = vol_weekly['date'].dt.to_period(period).dt.start_time
+        vol_agg = vol_weekly.groupby('period')['volatility'].mean().reset_index()
+        vol_agg = vol_agg.rename(columns={'period': 'date'})
+        merged = merged.merge(vol_agg, on='date', how='outer')
 
-    # Add CDS
+    # Add CDS (re-aggregate to match period)
     if cds_df is not None:
-        merged = merged.merge(cds_df, on='date', how='outer')
+        cds_df['period'] = cds_df['date'].dt.to_period(period).dt.start_time
+        cds_agg = cds_df.groupby('period')['cds_5y'].mean().reset_index()
+        cds_agg = cds_agg.rename(columns={'period': 'date'})
+        merged = merged.merge(cds_agg, on='date', how='outer')
 
     merged = merged.sort_values('date').reset_index(drop=True)
 
     # Filter to 2008 onwards
     merged = merged[merged['date'] >= ANALYSIS_START_DATE].copy()
-    print(f"  Filtered to 2008+: {len(merged)} observations")
+    print(f"  Filtered to 2008+ ({frequency}): {len(merged)} observations")
 
     # Select analysis variables
     # Note: Variable ordering matters for Cholesky identification in VAR/IRF
@@ -970,6 +990,8 @@ def main():
                         help='Maximum lag for Granger causality tests (default: 4)')
     parser.add_argument('--irf-periods', type=int, default=20,
                         help='Periods for IRF computation (default: 20)')
+    parser.add_argument('--frequency', type=str, default='weekly', choices=['weekly', 'monthly'],
+                        help='Data frequency: weekly or monthly (monthly reduces noise)')
     args = parser.parse_args()
 
     print("=" * 70)
@@ -982,7 +1004,7 @@ def main():
         return
 
     # Load and prepare data
-    df = prepare_analysis_data(args.lags)
+    df = prepare_analysis_data(args.lags, frequency=args.frequency)
     if df is None:
         return
 
