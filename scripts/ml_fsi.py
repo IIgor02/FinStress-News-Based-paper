@@ -372,8 +372,8 @@ def calculate_ml_fsi(X: pd.DataFrame, model, scaler) -> pd.Series:
 
 def standardize_fsi(fsi: pd.Series, vol: pd.Series) -> pd.Series:
     """
-    Standardize FSI to 0-1 scale.
-    Ensures positive correlation with volatility.
+    Standardize FSI to 0-1 scale using percentile-based normalization.
+    Ensures median is at 0.5 for balanced distribution.
 
     0 = minimum/no stress, 1 = maximum stress
     """
@@ -388,14 +388,9 @@ def standardize_fsi(fsi: pd.Series, vol: pd.Series) -> pd.Series:
         print(f"    Flipping FSI sign (correlation was {corr:.3f})")
         fsi = -fsi
 
-    # Normalize to 0-1 scale using min-max normalization
-    fsi_min = fsi.min()
-    fsi_max = fsi.max()
-
-    if fsi_max > fsi_min:
-        fsi_normalized = (fsi - fsi_min) / (fsi_max - fsi_min)
-    else:
-        fsi_normalized = pd.Series(0.5, index=fsi.index)
+    # Use percentile-based normalization (median = 0.5)
+    # This ensures balanced distribution around 0.5
+    fsi_normalized = fsi.rank(pct=True)
 
     # Ensure bounded [0, 1]
     fsi_normalized = fsi_normalized.clip(0, 1)
