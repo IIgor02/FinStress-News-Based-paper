@@ -1,0 +1,2 @@
+optimal_lambda,n_features,n_selected,train_r2,test_r2,corr_train,corr_test
+1.0,42,42,0.37737012028151573,-3.8979815352215734,-0.0187866100966339,-0.44055921342335846
