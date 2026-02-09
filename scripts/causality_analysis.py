@@ -759,6 +759,78 @@ def plot_fsi_shock_responses(df: pd.DataFrame, output_path: Path = None):
     plt.close()
 
 
+def plot_fsi_as_leading_indicator(df: pd.DataFrame, output_path: Path = None):
+    """
+    Create IRF plot showing FSI as a leading indicator - how CDS and volatility
+    respond to FSI shocks. This reflects the finding that FSI leads market stress.
+    """
+    if not MATPLOTLIB_AVAILABLE:
+        return
+
+    fsi_indices = ['dict_fsi', 'ml_fsi', 'news_fsi', 'combined_fsi']
+    response_vars = ['volatility', 'cds_5y']
+
+    # Filter to available FSIs
+    available_fsis = [f for f in fsi_indices if f in df.columns]
+    available_responses = [s for s in response_vars if s in df.columns]
+
+    if not available_fsis or not available_responses:
+        print("  Insufficient data for FSI leading indicator analysis")
+        return
+
+    n_fsis = len(available_fsis)
+    n_responses = len(available_responses)
+
+    fig, axes = plt.subplots(n_responses, n_fsis, figsize=(4*n_fsis, 4*n_responses))
+
+    periods = 20
+
+    for i, response in enumerate(available_responses):
+        for j, fsi in enumerate(available_fsis):
+            ax = axes[i, j] if n_responses > 1 and n_fsis > 1 else (axes[j] if n_responses == 1 else axes[i])
+
+            # Run bivariate IRF with FSI as shock (first) and market var as response (second)
+            irf_values, lower, upper, n_periods = run_bivariate_irf(df, fsi, response, periods=periods)
+
+            if irf_values is not None and n_periods > 0:
+                # Plot confidence interval
+                if lower is not None and upper is not None:
+                    ax.fill_between(range(n_periods), lower, upper, alpha=0.2, color='gray')
+
+                # Plot IRF line
+                ax.plot(range(n_periods), irf_values, color='black', linewidth=1.5)
+
+                # Check significance
+                if lower is not None and upper is not None:
+                    significant = not any((lower[k] <= 0 <= upper[k]) for k in range(1, min(8, n_periods)))
+                    sig_marker = '*' if significant else ''
+                else:
+                    sig_marker = ''
+            else:
+                ax.text(0.5, 0.5, 'N/A', ha='center', va='center', transform=ax.transAxes)
+                sig_marker = ''
+
+            ax.axhline(y=0, color='gray', linestyle='--', linewidth=0.5)
+
+            # Labels
+            fsi_label = fsi.replace('_', ' ').replace('fsi', 'FSI').title()
+            response_label = response.replace('_', ' ').replace('5y', '5Y').title()
+            ax.set_title(f'{fsi_label} → {response_label}{sig_marker}', fontsize=10)
+
+            if i == n_responses - 1:
+                ax.set_xlabel('Weeks')
+            if j == 0:
+                ax.set_ylabel('Response')
+
+    plt.suptitle('FSI as Leading Indicator: Market Response to FSI Shocks\n(* indicates significant at 95% CI for first 8 weeks)', fontsize=12)
+    plt.tight_layout()
+
+    if output_path:
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        print(f"  Saved: {output_path}")
+    plt.close()
+
+
 # =============================================================================
 # REPORT GENERATION
 # =============================================================================
@@ -987,6 +1059,10 @@ def main():
     # Bivariate IRF analysis for each FSI index
     print("\nComputing bivariate IRFs for each FSI index...")
     plot_fsi_shock_responses(df, PLOTS_DIR / 'irf_fsi_responses.png')
+
+    # FSI as leading indicator analysis
+    print("\nComputing FSI as leading indicator IRFs...")
+    plot_fsi_as_leading_indicator(df, PLOTS_DIR / 'irf_fsi_leading.png')
 
     print("\n" + "=" * 70)
     print("CAUSALITY ANALYSIS COMPLETE")
