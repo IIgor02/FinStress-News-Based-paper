@@ -1,384 +1,340 @@
-# Financial Stress Index (FSI) for Brazil
+# Replication Package: Financial Stress Index for Brazil
 
-Multiple complementary Financial Stress Indices for Brazil using Google Trends, LASSO regression, and news sentiment analysis.
+**A News-Based Financial Stress Index: Evidence from Brazilian Markets**
 
-**Analysis Period**: All analysis is standardized to start from **2008 onwards** for consistency across methodologies.
+Pedro Igor - CAEN/UFC
 
-**All FSI outputs are scaled 0-1 where:**
-- **0** = No/minimum financial stress
-- **1** = Maximum financial stress
-- **0.5** = Neutral/average stress level
+---
 
-## Methods
+## Overview
 
-### 1. Dictionary-Based FSI
-- Pre-defined stress queries with tier-based weights
-- 25 queries in 5 tiers
-- Weighted aggregation of Google Trends SVI
-- Output: 0-1 scale
+This repository contains the replication code and data for constructing a Financial Stress Index (FSI) for Brazil using Google Trends search behavior, and analyzing its predictive power for sovereign credit risk (CDS spreads).
 
-### 2. ML-Generated FSI (LASSO)
-- LASSO regression learns which queries predict market declines
-- ~100 queries with automatic feature selection
-- FSI = negative of predicted return (normalized to 0-1)
-- Handles large datasets with batch processing
-- Output: 0-1 scale
+### Key Findings
 
-### 3. News-Based FSI
-- Scrapes news from G1, Valor Econômico, Folha de S. Paulo
-- **Two-way co-occurrence**: financial + (stress OR negative) terms
-- More inclusive than three-way co-occurrence
-- Weighted scoring: stress terms count 2x more than negative terms
-- Output: 0-1 scale
+1. **Dictionary-based FSI outperforms ML and combined approaches** for predicting CDS movements
+2. **Positive and significant IRF**: A one-standard-deviation FSI shock predicts cumulative CDS increase of ~0.85 log-points over 12 months
+3. **13 out of 13 months show significant predictive power** (p < 0.10) for dictionary-based FSI
+4. **ML-based FSI has inverted behavior**: Negative predictive correlation with CDS (r = -0.24)
 
-### 4. Combined FSI
-- Combines all methodologies using weighted average, PCA, or dynamic weights
-- Validates against IBOVESPA realized volatility
-- All components normalized to 0-1 before combining
-- Output: 0-1 scale
+---
 
-### 5. Econometric Enhancements
+## Quick Replication
 
-#### Kalman Filter Smoothing
-- Treats FSI as latent variable observed with noise
-- Separates signal from noise using state-space model
-- Imputes missing values via Kalman smoothing (not linear interpolation)
-- Provides variance decomposition analysis
-
-#### Markov Switching Regime Analysis
-- Identifies "Crisis" vs "Calm" regimes using Hamilton (1989) methodology
-- Estimates regime-specific means and variances
-- Provides transition probabilities and expected regime durations
-- Validates against known historical crisis periods
-
-#### CDS Benchmark Integration
-- Compares FSI against Brazil 5Y CDS spread
-- CDS serves as market-based sovereign stress indicator
-- Calculates correlations and generates comparison plots
-
-#### Granger Causality and IRF Analysis
-- Tests causal relationships between FSI and market indicators
-- Vector Autoregression (VAR) model with AIC-based lag selection
-- Impulse Response Functions (IRF) with confidence intervals
-- Variance decomposition (FEVD)
-
-## Quick Start
+To replicate the main results, run the following commands:
 
 ```bash
-# Install dependencies
+# 1. Install dependencies
 pip install -r requirements.txt
 
-# === DICTIONARY-BASED FSI ===
+# 2. Generate publication figures and tables (main results)
+python scripts/generate_paper_figures.py
+```
+
+The main outputs will be in `output/figures/`:
+- `figure_3_irf_main.png` - Main IRF result
+- `table_2_irf_results.csv` - IRF summary statistics
+
+---
+
+## Full Replication Guide
+
+### Step 1: Environment Setup
+
+```bash
+# Create virtual environment (recommended)
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
+# or: venv\Scripts\activate  # Windows
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+**Required packages**: pandas, numpy, scipy, statsmodels, scikit-learn, matplotlib
+
+### Step 2: Data Collection
+
+The raw data is included in `data/raw/`. To recollect from sources:
+
+```bash
+# Google Trends data (dictionary queries)
 python scripts/collect_data.py
+
+# Google Trends data (ML queries - extended set)
+python scripts/collect_data.py --ml
+
+# News articles (optional - requires Selenium)
+python scripts/collect_news.py --start-year 2008 --end-year 2025
+
+# IBOVESPA market data
+python scripts/fetch_ibov_data.py
+
+# Brazil CDS data
+python scripts/fetch_cds_data.py
+```
+
+### Step 3: FSI Construction
+
+```bash
+# Dictionary-based FSI (Da et al. 2011 methodology)
 python scripts/run_fsi.py
 
-# === ML-BASED FSI ===
-python scripts/collect_data.py --ml
+# ML-based FSI (García et al. 2023 methodology)
 python scripts/ml_fsi.py
 
-# === NEWS-BASED FSI ===
-python scripts/collect_news.py --start-year 2002 --end-year 2025
+# News-based FSI (optional)
 python scripts/news_fsi.py
 
-# === COMBINED FSI ===
+# Combined FSI (all methods)
 python scripts/combined_fsi.py --method weighted
+```
 
-# === ADVANCED ANALYSIS ===
-# Kalman smoothing
-python scripts/analyze_fsi.py --smooth
+### Step 4: Econometric Analysis
 
-# With CDS benchmark
-python scripts/analyze_fsi.py --smooth --cds
+```bash
+# Main causality analysis (Local Projections IRF)
+python scripts/causality_analysis.py
 
 # Regime analysis (Markov Switching)
 python scripts/regime_analysis.py
 
-# Granger Causality and IRF
-python scripts/causality_analysis.py
-```
-
-## Project Structure
-
-```
-FinStress-News-Based-paper/
-├── scripts/
-│   ├── dictionaries.py        # Dictionary definitions (270+ terms, 100+ queries)
-│   ├── collect_data.py        # Google Trends + IBOVESPA collection
-│   ├── collect_news.py        # News scraping (G1, Valor, Folha)
-│   ├── run_fsi.py             # Dictionary-based FSI
-│   ├── ml_fsi.py              # ML-based FSI (LASSO)
-│   ├── news_fsi.py            # News-based FSI
-│   ├── combined_fsi.py        # Combined FSI (all methods)
-│   ├── analyze_fsi.py         # Comprehensive FSI analysis + CDS benchmark
-│   ├── econometrics.py        # Kalman Filter smoothing & gap imputation
-│   ├── regime_analysis.py     # Markov Switching regime identification
-│   ├── causality_analysis.py  # Granger Causality and IRF analysis
-│   ├── fetch_cds_data.py      # Brazil CDS data utilities
-│   └── fetch_ibov_data.py     # IBOVESPA data utilities
-├── data/raw/                  # Input data
-├── output/                    # Results and plots
-│   ├── results/               # FSI CSVs
-│   └── plots/                 # Visualization PNGs
-└── requirements.txt
-```
-
-## Data Collection
-
-### Google Trends Data
-```bash
-# Dictionary method (25 queries)
-python scripts/collect_data.py
-
-# ML method (104 queries)
-python scripts/collect_data.py --ml
-
-# Custom date range
-python scripts/collect_data.py --start-date 2002-01-01 --end-date 2025-12-31
-```
-
-### News Data
-```bash
-# All sources (G1, Valor, Folha)
-python scripts/collect_news.py --start-year 2002 --end-year 2025
-
-# Folha only (fastest, no Selenium required)
-python scripts/collect_news.py --folha-only
-
-# Skip Selenium (Folha only)
-python scripts/collect_news.py --no-selenium
-```
-
-**Note**: G1 and Valor require Selenium for JavaScript-rendered pages. Folha works with regular HTTP requests.
-
-### CDS Data
-Real Brazil 5Y CDS data from Investing.com is included. To process:
-```bash
-python scripts/fetch_cds_data.py
-```
-The script automatically finds and parses `Brasil CDS 5 Anos USD - Visão Geral.csv` (Portuguese locale format) and saves it to `data/raw/brazil_cds_5y.csv`.
-
-Data source: [Investing.com Brazil CDS](https://www.investing.com/rates-bonds/brazil-cds-5-years-usd-historical-data)
-
-## FSI Calculation
-
-### Dictionary-Based
-```bash
-python scripts/run_fsi.py
-python scripts/run_fsi.py --aggregation pca
-```
-
-### ML-Based (LASSO)
-```bash
-python scripts/ml_fsi.py
-python scripts/ml_fsi.py --train-end 2020-12-31
-```
-
-### News-Based
-```bash
-python scripts/news_fsi.py
-python scripts/news_fsi.py --data path/to/news.csv
-```
-
-### Combined
-```bash
-python scripts/combined_fsi.py --method average
-python scripts/combined_fsi.py --method weighted
-python scripts/combined_fsi.py --method pca
-python scripts/combined_fsi.py --method dynamic
-```
-
-## Methodology
-
-### FSI Scale (0-1)
-
-All FSI outputs use a normalized 0-1 scale:
-```
-0.0 = Minimum/no financial stress
-0.5 = Neutral/average stress level
-1.0 = Maximum financial stress
-```
-
-This allows direct comparison between different FSI methodologies.
-
-### Dictionary FSI
-```
-FSI_raw = weighted_average(SVI × tier_weight)
-FSI = min-max_normalize(FSI_raw) → [0, 1]
-
-Tier 1 (Crisis):   1.5x weight
-Tier 2 (Market):   1.2x weight
-Tier 3-5:          1.0x weight
-```
-
-### ML FSI (LASSO)
-```
-Step 1: r_{t+1} = γ₀ + Σ φ_k × SVI_{k,t}
-Step 2: LASSO (L1 penalty) selects predictive queries
-Step 3: FSI_raw = -predicted_return
-Step 4: FSI = min-max_normalize(FSI_raw) → [0, 1]
-```
-
-### News FSI
-```
-For each article:
-  1. Count financial terms (mercado, bolsa, etc.)
-  2. Count stress terms (crise, pânico, etc.)
-  3. Count negative terms (queda, perda, etc.)
-  4. TWO-WAY co-occurrence: financial + (stress OR negative)
-  5. Weighted score = (stress × 2) + negative
-
-FSI_raw = aggregate(stress_scores) per week
-FSI = min-max_normalize(FSI_raw) → [0, 1]
-```
-
-### Combined FSI
-```
-Method 1: Simple average of normalized FSIs
-Method 2: Weighted average (Dict: 40%, ML: 35%, News: 25%)
-Method 3: PCA first principal component (normalized to 0-1)
-Method 4: Dynamic weights based on rolling correlation with volatility
-```
-
-## Output Files
-
-| Script | Output | Scale |
-|--------|--------|-------|
-| `run_fsi.py` | `output/results/fsi_weekly.csv` | 0-1 |
-| `ml_fsi.py` | `output/ml_fsi_weekly.csv` | 0-1 |
-| `news_fsi.py` | `output/news_fsi_weekly.csv` | 0-1 |
-| `combined_fsi.py` | `output/combined_fsi.csv` | 0-1 |
-| `analyze_fsi.py` | `output/fsi_analysis_report.txt` | - |
-| `regime_analysis.py` | `output/regime_probabilities.csv` | 0-1 |
-| `causality_analysis.py` | `output/causality_analysis_report.txt` | - |
-
-## Query Categories
-
-| Category | Queries | Examples |
-|----------|---------|----------|
-| Crisis | 15 | crise financeira, crash financeiro |
-| Stock Market | 18 | queda ibovespa, circuit breaker |
-| Banking | 12 | crise bancária, inadimplência |
-| Sovereign | 14 | risco default, rebaixamento rating |
-| Currency | 12 | dólar dispara, fuga capitais |
-| Political | 11 | impeachment, lava jato |
-| Macro | 12 | inflação alta, desemprego |
-| Sentiment | 10 | vender ações, mercado vai cair |
-
-## Text Dictionaries (for News Analysis)
-
-| Dictionary | Terms | Examples |
-|------------|-------|----------|
-| Financial | ~270 | mercado, bolsa, ibovespa, ações |
-| Stress | ~160 | crise, pânico, risco, instabilidade |
-| Negative | ~440 | queda, perda, prejuízo, falência |
-
-## Performance Notes
-
-- **Large datasets**: ML FSI uses batch processing for datasets with >10,000 samples
-- **News scraping**: Folha is fastest (HTTP only); G1/Valor require Selenium
-- **Memory**: For very large news datasets, FSI calculation is optimized with efficient pandas operations
-
-## Advanced Econometric Methods
-
-### Kalman Filter Smoothing
-
-The state-space model treats FSI as a latent variable:
-
-```
-Observation: y_t = α_t + ε_t,    ε_t ~ N(0, σ²_ε)
-State:       α_{t+1} = α_t + η_t,  η_t ~ N(0, σ²_η)
-```
-
-Where:
-- `y_t` = Observed (noisy) FSI
-- `α_t` = Latent (true) financial stress level
-- `ε_t` = Observation noise
-- `η_t` = State transition noise
-
-Usage:
-```bash
-# Apply Kalman smoothing during analysis
-python scripts/analyze_fsi.py --smooth
-
-# Or use the econometrics module directly
-python scripts/econometrics.py
-```
-
-### Markov Switching Regime Analysis
-
-The Hamilton (1989) model assumes FSI depends on a latent regime:
-
-```
-y_t = μ_{S_t} + σ_{S_t} * ε_t,    ε_t ~ N(0, 1)
-```
-
-Where `S_t ∈ {0, 1}` follows a Markov chain with transition matrix P:
-
-```
-P = | p_00  p_01 |
-    | p_10  p_11 |
-```
-
-This identifies:
-- **Regime 0 (Calm)**: Low mean, low variance
-- **Regime 1 (Crisis)**: High mean, high variance
-
-Usage:
-```bash
-# Run regime analysis
-python scripts/regime_analysis.py
-
-# Use Kalman-smoothed data
-python scripts/regime_analysis.py --smooth
-
-# Custom probability threshold
-python scripts/regime_analysis.py --threshold 0.7
-```
-
-### CDS Benchmark
-
-Brazil 5Y CDS spread serves as market-based validation:
-
-```bash
-# Include CDS in analysis
-python scripts/analyze_fsi.py --cds
-
-# Full analysis with smoothing and CDS
+# FSI analysis with Kalman smoothing
 python scripts/analyze_fsi.py --smooth --cds
 ```
 
-To use CDS data, place a CSV file at project root:
-- `Brasil CDS 5 Anos USD - Visão Geral.csv` (Investing.com format)
-- Or `data/raw/brazil_cds_5y.csv` (standard format with date, cds_5y columns)
-
-### Granger Causality and IRF
-
-Tests whether FSI helps predict market indicators:
+### Step 5: Generate Paper Figures
 
 ```bash
-# Run causality analysis
-python scripts/causality_analysis.py
-
-# Custom lag order
-python scripts/causality_analysis.py --lags 8
+# Generate all publication-quality figures
+python scripts/generate_paper_figures.py
 ```
 
-Output includes:
-- Granger causality p-value heatmap
-- Impulse Response Functions with confidence intervals
-- Variance decomposition (FEVD)
-- Stationarity tests (ADF)
+---
+
+## Repository Structure
+
+```
+FinStress-News-Based-paper/
+│
+├── README.md                    # This file
+├── requirements.txt             # Python dependencies
+│
+├── data/
+│   └── raw/                     # Raw input data
+│       ├── google_trends_data.csv
+│       ├── google_trends_ml.csv
+│       ├── ibovespa_data.csv
+│       ├── brazil_cds_5y.csv
+│       └── news_*.csv
+│
+├── scripts/
+│   ├── plot_style.py            # Academic plot styling
+│   ├── dictionaries.py          # Search query dictionaries
+│   │
+│   │   # Data Collection
+│   ├── collect_data.py          # Google Trends collection
+│   ├── collect_news.py          # News scraping
+│   ├── fetch_ibov_data.py       # IBOVESPA data
+│   ├── fetch_cds_data.py        # CDS data
+│   │
+│   │   # FSI Construction
+│   ├── run_fsi.py               # Dictionary-based FSI
+│   ├── ml_fsi.py                # ML-based FSI (LASSO)
+│   ├── news_fsi.py              # News-based FSI
+│   ├── combined_fsi.py          # Combined FSI
+│   │
+│   │   # Econometric Analysis
+│   ├── causality_analysis.py    # Local Projections IRF
+│   ├── regime_analysis.py       # Markov Switching
+│   ├── analyze_fsi.py           # FSI analysis
+│   ├── econometrics.py          # Kalman Filter
+│   │
+│   │   # Paper Output
+│   ├── generate_paper_figures.py # Publication figures
+│   └── investigate_fsi_construction.py  # Methodology comparison
+│
+└── output/
+    ├── figures/                 # Publication-ready figures
+    │   ├── figure_1_fsi_timeseries.png
+    │   ├── figure_2_fsi_vs_cds.png
+    │   ├── figure_3_irf_main.png
+    │   ├── figure_4_methodology_comparison.png
+    │   ├── figure_5_crisis_analysis.png
+    │   ├── figure_6_predictive_correlation.png
+    │   ├── table_1_summary_statistics.csv
+    │   └── table_2_irf_results.csv
+    │
+    ├── results/                 # Intermediate results
+    │   ├── fsi_weekly.csv
+    │   ├── fsi_ml_weekly.csv
+    │   └── ml_coefficients.csv
+    │
+    ├── plots/                   # Additional plots
+    └── fsi_monthly_aligned.csv  # Aligned monthly data
+```
+
+---
+
+## Methodology
+
+### Financial Stress Index Construction
+
+#### Dictionary-Based FSI (Primary Method)
+
+Based on Da, Engelberg, and Gao (2011), we construct an FSI using Google Trends Search Volume Index (SVI) for financial stress-related queries in Portuguese.
+
+**Query categories**:
+- Crisis terms (e.g., "crise financeira", "crash bolsa")
+- Stock market terms (e.g., "queda ibovespa", "circuit breaker")
+- Banking terms (e.g., "crise bancária", "falência banco")
+- Sovereign risk terms (e.g., "default Brasil", "rebaixamento rating")
+- Currency terms (e.g., "dólar dispara", "fuga capitais")
+
+**Aggregation**:
+```
+FSI_t = Σ (w_i × SVI_{i,t}) / Σ w_i
+
+where w_i = tier weight (1.5 for crisis, 1.2 for market, 1.0 for others)
+```
+
+**Normalization**: Min-max scaling to [0, 1] range.
+
+#### ML-Based FSI (Comparison)
+
+Based on García, Hu, and Rohrer (2023), we use LASSO regression to select predictive queries:
+
+```
+r_{t+1} = α + Σ β_i × SVI_{i,t} + ε_t
+
+FSI_t = -ŷ_{t+1}  (negative of predicted return)
+```
+
+**Finding**: ML FSI has negative predictive correlation with CDS (r = -0.24), indicating inverted behavior relative to true financial stress.
+
+### Econometric Analysis
+
+#### Local Projections IRF (Jordà 2005)
+
+We estimate impulse response functions using Local Projections:
+
+```
+Σ_{j=0}^{h} Δlog(CDS)_{t+j} = α_h + β_h × ΔFS_t + Σ_{k=1}^{p} γ_{h,k} × Δlog(CDS)_{t-k} + ε_{t+h}
+```
+
+Where:
+- h = forecast horizon (0 to 12 months)
+- β_h = cumulative IRF coefficient at horizon h
+- Standard errors: Newey-West HAC with h+1 lags
+
+#### Key Specifications
+
+- **Data frequency**: Monthly
+- **Sample period**: 2008-02 to 2025-11 (214 observations)
+- **CDS transformation**: Log-returns (stationarity)
+- **FSI transformation**: First differences (changes)
+- **Control variables**: 4 lags of CDS log-returns
+
+---
+
+## Main Results
+
+### Table 2: IRF Results Summary
+
+| Method | Cumulative IRF | Significant Months | Peak Response |
+|--------|----------------|-------------------|---------------|
+| Dictionary FSI | **+0.846** | **13/13** | 0.087 (Month 1) |
+| ML FSI | -0.281 | 0/13 | 0.033 (Month 5) |
+| Combined FSI | +0.429 | 5/13 | 0.057 (Month 0) |
+
+### Interpretation
+
+A one-standard-deviation increase in the Dictionary FSI predicts:
+- **Immediate effect**: 8.7% increase in CDS spread (Month 1)
+- **Cumulative effect**: 84.6% cumulative increase over 12 months
+- **Persistence**: Significant effects in all 13 months (p < 0.10)
+
+---
+
+## Data Sources
+
+| Data | Source | Period |
+|------|--------|--------|
+| Google Trends SVI | Google Trends API | 2008-present |
+| IBOVESPA | Yahoo Finance | 2008-present |
+| Brazil 5Y CDS | Investing.com | 2008-present |
+| News Articles | G1, Valor, Folha | 2008-present |
+
+---
+
+## FSI Scale Interpretation
+
+All FSI outputs use a standardized 0-1 scale:
+
+| Value | Interpretation |
+|-------|----------------|
+| 0.0 | Minimum/no financial stress |
+| 0.5 | Neutral/average stress level |
+| 1.0 | Maximum financial stress |
+
+---
+
+## Figures Description
+
+### Figure 1: FSI Time Series
+Shows the Dictionary-based FSI for Brazil (2008-2025) with 12-month moving average and crisis period shading (GFC, Brazilian Recession, COVID-19).
+
+### Figure 2: FSI vs CDS
+Dual-axis comparison of FSI with Brazil 5-Year CDS spread, demonstrating strong co-movement (r = 0.67).
+
+### Figure 3: Impulse Response Function (Main Result)
+Local Projections IRF showing CDS response to FSI shock with 90% and 95% confidence intervals.
+
+### Figure 4: Methodology Comparison
+Side-by-side IRF comparison of Dictionary, ML, and Combined FSI approaches.
+
+### Figure 5: Crisis Period Analysis
+Detailed FSI behavior during major crisis episodes (GFC, Brazilian Recession, COVID-19).
+
+### Figure 6: Predictive Correlation
+Bar chart showing FSI correlation with future CDS returns at different horizons.
+
+---
 
 ## References
 
-- Da, Z., Engelberg, J., & Gao, P. (2011). In Search of Attention. *The Journal of Finance*.
-- García, D., Hu, X., & Rohrer, M. (2023). The Color of Finance Words. *Journal of Financial Economics*.
-- Baker, S.R., Bloom, N., & Davis, S.J. (2016). Measuring Economic Policy Uncertainty. *Quarterly Journal of Economics*.
-- Hamilton, J.D. (1989). A New Approach to the Economic Analysis of Nonstationary Time Series and the Business Cycle. *Econometrica*.
-- Granger, C.W.J. (1969). Investigating Causal Relations by Econometric Models and Cross-Spectral Methods. *Econometrica*.
-- Durbin, J., & Koopman, S.J. (2012). Time Series Analysis by State Space Methods. *Oxford University Press*.
-- Lütkepohl, H. (2005). New Introduction to Multiple Time Series Analysis. *Springer*.
+- Da, Z., Engelberg, J., & Gao, P. (2011). In Search of Attention. *The Journal of Finance*, 66(5), 1461-1499.
+- García, D., Hu, X., & Rohrer, M. (2023). The Color of Finance Words. *Journal of Financial Economics*, 147(3), 525-549.
+- Jordà, Ò. (2005). Estimation and Inference of Impulse Responses by Local Projections. *American Economic Review*, 95(1), 161-182.
+- Hamilton, J. D. (1989). A New Approach to the Economic Analysis of Nonstationary Time Series. *Econometrica*, 57(2), 357-384.
+- Newey, W. K., & West, K. D. (1987). A Simple, Positive Semi-Definite, Heteroskedasticity and Autocorrelation Consistent Covariance Matrix. *Econometrica*, 55(3), 703-708.
 
-## Author
+---
+
+## Citation
+
+If you use this code or data, please cite:
+
+```bibtex
+@misc{igor2025fsi,
+  author = {Igor, Pedro},
+  title = {A News-Based Financial Stress Index: Evidence from Brazilian Markets},
+  year = {2025},
+  institution = {CAEN/UFC},
+  url = {https://github.com/IIgor02/FinStress-News-Based-paper}
+}
+```
+
+---
+
+## License
+
+This project is for academic purposes. Please cite appropriately if using in research.
+
+---
+
+## Contact
 
 Pedro Igor - CAEN/UFC
+
+For questions about the replication package, please open an issue on GitHub.
