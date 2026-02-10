@@ -38,6 +38,7 @@ from scripts.plot_style import (
 
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+from matplotlib.patches import Patch
 
 # Apply academic style
 apply_style()
@@ -47,6 +48,13 @@ FIGURES_DIR = PROJECT_DIR / 'output' / 'figures'
 OUTPUT_DIR = PROJECT_DIR / 'output'
 DATA_DIR = PROJECT_DIR / 'data' / 'raw'
 FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+
+# FSI Index configurations
+FSI_INDICES = {
+    'dict_fsi': {'name': 'Dictionary FSI', 'short': 'dict'},
+    'ml_fsi': {'name': 'ML FSI', 'short': 'ml'},
+    'combined_fsi': {'name': 'Combined FSI', 'short': 'combined'},
+}
 
 
 # =============================================================================
@@ -237,21 +245,22 @@ def compute_lp_irf_improved(df, shock_var, response_var, max_horizon=12, n_lags=
 
 
 # =============================================================================
-# FIGURE 1: FSI Time Series
+# FIGURE 1: FSI Time Series (Individual and Combined versions)
 # =============================================================================
 
-def figure_1_fsi_timeseries(df):
-    """Figure 1: Dictionary-Based Financial Stress Index for Brazil"""
-    print("\nGenerating Figure 1: FSI Time Series...")
+def figure_1_fsi_timeseries_single(df, fsi_col, fsi_name, suffix):
+    """Figure 1: Single FSI Time Series"""
+    if fsi_col not in df.columns:
+        return
 
     fig, ax = plt.subplots(figsize=FIGSIZE['double'])
 
     # Main FSI line
-    ax.plot(df['date'], df['dict_fsi'], color=COLORS['black'],
-            linewidth=1.0, label='Dictionary FSI', zorder=3)
+    ax.plot(df['date'], df[fsi_col], color=COLORS['black'],
+            linewidth=1.0, label=fsi_name, zorder=3)
 
     # 12-month moving average
-    ma = df['dict_fsi'].rolling(12, min_periods=1).mean()
+    ma = df[fsi_col].rolling(12, min_periods=1).mean()
     ax.plot(df['date'], ma, color=COLORS['dark_gray'],
             linewidth=2, linestyle='--', label='12-Month MA', zorder=4)
 
@@ -269,7 +278,6 @@ def figure_1_fsi_timeseries(df):
 
     ax.set_xlabel('Date')
     ax.set_ylabel('Financial Stress Index')
-    ax.set_title('Figure 1: Dictionary-Based Financial Stress Index for Brazil (2008-2025)')
     ax.set_ylim(0, 1.05)
 
     years = (df['date'].max() - df['date'].min()).days / 365
@@ -278,27 +286,109 @@ def figure_1_fsi_timeseries(df):
     ax.legend(loc='upper left', framealpha=0.95)
     ax.grid(True, alpha=0.3)
 
-    save_figure(fig, 'figure_1_fsi_timeseries', FIGURES_DIR)
+    save_figure(fig, f'figure_1_fsi_timeseries_{suffix}', FIGURES_DIR)
     plt.close()
 
 
-# =============================================================================
-# FIGURE 2: FSI vs CDS
-# =============================================================================
+def figure_1_fsi_timeseries_all(df):
+    """Figure 1: All FSI Indices Combined"""
+    fig, ax = plt.subplots(figsize=FIGSIZE['double'])
 
-def figure_2_fsi_vs_cds(df):
-    """Figure 2: FSI vs Brazil 5-Year CDS Spread"""
-    print("Generating Figure 2: FSI vs CDS...")
+    line_configs = [
+        ('dict_fsi', 'Dictionary FSI', COLORS['black'], '-'),
+        ('ml_fsi', 'ML FSI', COLORS['dark_gray'], '--'),
+        ('combined_fsi', 'Combined FSI', COLORS['gray'], ':'),
+    ]
 
-    if 'cds_5y' not in df.columns:
-        print("  Skipping: CDS data not available")
+    for fsi_col, label, color, linestyle in line_configs:
+        if fsi_col in df.columns:
+            ax.plot(df['date'], df[fsi_col], color=color,
+                    linewidth=1.5, linestyle=linestyle, label=label, zorder=3)
+
+    # Neutral line
+    ax.axhline(y=0.5, color=COLORS['light_gray'], linestyle=':',
+               linewidth=0.8, alpha=0.7)
+
+    # Crisis shading
+    for (start, end), label in CRISIS_PERIODS.items():
+        start_dt = pd.to_datetime(start)
+        end_dt = pd.to_datetime(end)
+        if df['date'].min() <= end_dt and df['date'].max() >= start_dt:
+            ax.axvspan(start_dt, end_dt, alpha=0.15,
+                       color=COLORS['fill_dark'], zorder=0)
+
+    ax.set_xlabel('Date')
+    ax.set_ylabel('Financial Stress Index')
+    ax.set_ylim(0, 1.05)
+
+    years = (df['date'].max() - df['date'].min()).days / 365
+    format_date_axis(ax, years)
+
+    ax.legend(loc='upper left', framealpha=0.95)
+    ax.grid(True, alpha=0.3)
+
+    save_figure(fig, 'figure_1_fsi_timeseries_all', FIGURES_DIR)
+    plt.close()
+
+
+def figure_1_fsi_with_volatility(df, fsi_col, fsi_name, suffix):
+    """Figure 1: FSI with IBOV Volatility overlay"""
+    if fsi_col not in df.columns or 'volatility' not in df.columns:
         return
 
     fig, ax1 = plt.subplots(figsize=FIGSIZE['double'])
 
     # FSI (left axis)
-    line1, = ax1.plot(df['date'], df['dict_fsi'], color=COLORS['black'],
-                      linewidth=1.5, label='Dictionary FSI')
+    line1, = ax1.plot(df['date'], df[fsi_col], color=COLORS['black'],
+                      linewidth=1.5, label=fsi_name)
+    ax1.set_ylabel('Financial Stress Index', color=COLORS['black'])
+    ax1.set_ylim(0, 1.05)
+    ax1.tick_params(axis='y', labelcolor=COLORS['black'])
+
+    # Volatility (right axis)
+    ax2 = ax1.twinx()
+    line2, = ax2.plot(df['date'], df['volatility'], color=COLORS['gray'],
+                      linewidth=1.5, linestyle='--', label='IBOV Volatility')
+    ax2.set_ylabel('IBOV Realized Volatility (%)', color=COLORS['gray'])
+    ax2.tick_params(axis='y', labelcolor=COLORS['gray'])
+
+    # Crisis shading
+    for (start, end), label in CRISIS_PERIODS.items():
+        start_dt = pd.to_datetime(start)
+        end_dt = pd.to_datetime(end)
+        if df['date'].min() <= end_dt and df['date'].max() >= start_dt:
+            ax1.axvspan(start_dt, end_dt, alpha=0.15,
+                        color=COLORS['fill_dark'], zorder=0)
+
+    ax1.set_xlabel('Date')
+
+    years = (df['date'].max() - df['date'].min()).days / 365
+    format_date_axis(ax1, years)
+
+    lines = [line1, line2]
+    labels = [l.get_label() for l in lines]
+    ax1.legend(lines, labels, loc='upper left', framealpha=0.95)
+
+    ax1.grid(True, alpha=0.3)
+
+    save_figure(fig, f'figure_1_fsi_volatility_{suffix}', FIGURES_DIR)
+    plt.close()
+
+
+# =============================================================================
+# FIGURE 2: FSI vs CDS (Individual and Combined versions)
+# =============================================================================
+
+def figure_2_fsi_vs_cds_single(df, fsi_col, fsi_name, suffix):
+    """Figure 2: Single FSI vs CDS"""
+    if fsi_col not in df.columns or 'cds_5y' not in df.columns:
+        return
+
+    fig, ax1 = plt.subplots(figsize=FIGSIZE['double'])
+
+    # FSI (left axis)
+    line1, = ax1.plot(df['date'], df[fsi_col], color=COLORS['black'],
+                      linewidth=1.5, label=fsi_name)
     ax1.set_ylabel('Financial Stress Index', color=COLORS['black'])
     ax1.set_ylim(0, 1.05)
     ax1.tick_params(axis='y', labelcolor=COLORS['black'])
@@ -318,10 +408,9 @@ def figure_2_fsi_vs_cds(df):
             ax1.axvspan(start_dt, end_dt, alpha=0.15,
                         color=COLORS['fill_dark'], zorder=0)
 
-    corr = df['dict_fsi'].corr(df['cds_5y'])
+    corr = df[fsi_col].corr(df['cds_5y'])
 
     ax1.set_xlabel('Date')
-    ax1.set_title(f'Figure 2: Financial Stress Index vs Brazil 5-Year CDS Spread (r = {corr:.2f})')
 
     years = (df['date'].max() - df['date'].min()).days / 365
     format_date_axis(ax1, years)
@@ -330,18 +419,130 @@ def figure_2_fsi_vs_cds(df):
     labels = [l.get_label() for l in lines]
     ax1.legend(lines, labels, loc='upper left', framealpha=0.95)
 
+    # Correlation annotation
+    textstr = f'Correlation: {corr:.2f}'
+    props = dict(boxstyle='round', facecolor='white', alpha=0.9,
+                 edgecolor=COLORS['light_gray'])
+    ax1.text(0.97, 0.97, textstr, transform=ax1.transAxes, fontsize=9,
+             verticalalignment='top', horizontalalignment='right', bbox=props)
+
     ax1.grid(True, alpha=0.3)
 
-    save_figure(fig, 'figure_2_fsi_vs_cds', FIGURES_DIR)
+    save_figure(fig, f'figure_2_fsi_vs_cds_{suffix}', FIGURES_DIR)
+    plt.close()
+
+
+def figure_2_fsi_vs_cds_all(df):
+    """Figure 2: All FSI Indices vs CDS"""
+    if 'cds_5y' not in df.columns:
+        return
+
+    fig, ax1 = plt.subplots(figsize=FIGSIZE['double'])
+
+    line_configs = [
+        ('dict_fsi', 'Dictionary FSI', COLORS['black'], '-'),
+        ('ml_fsi', 'ML FSI', COLORS['dark_gray'], '--'),
+        ('combined_fsi', 'Combined FSI', COLORS['gray'], ':'),
+    ]
+
+    lines = []
+    for fsi_col, label, color, linestyle in line_configs:
+        if fsi_col in df.columns:
+            line, = ax1.plot(df['date'], df[fsi_col], color=color,
+                            linewidth=1.5, linestyle=linestyle, label=label)
+            lines.append(line)
+
+    ax1.set_ylabel('Financial Stress Index', color=COLORS['black'])
+    ax1.set_ylim(0, 1.05)
+
+    # CDS (right axis)
+    ax2 = ax1.twinx()
+    line_cds, = ax2.plot(df['date'], df['cds_5y'], color=COLORS['light_gray'],
+                         linewidth=2, linestyle='-', label='CDS 5Y (bps)', alpha=0.7)
+    ax2.set_ylabel('CDS Spread (basis points)', color=COLORS['light_gray'])
+    ax2.tick_params(axis='y', labelcolor=COLORS['light_gray'])
+
+    # Crisis shading
+    for (start, end), label in CRISIS_PERIODS.items():
+        start_dt = pd.to_datetime(start)
+        end_dt = pd.to_datetime(end)
+        if df['date'].min() <= end_dt and df['date'].max() >= start_dt:
+            ax1.axvspan(start_dt, end_dt, alpha=0.15,
+                        color=COLORS['fill_dark'], zorder=0)
+
+    ax1.set_xlabel('Date')
+
+    years = (df['date'].max() - df['date'].min()).days / 365
+    format_date_axis(ax1, years)
+
+    all_lines = lines + [line_cds]
+    labels = [l.get_label() for l in all_lines]
+    ax1.legend(all_lines, labels, loc='upper left', framealpha=0.95)
+
+    ax1.grid(True, alpha=0.3)
+
+    save_figure(fig, 'figure_2_fsi_vs_cds_all', FIGURES_DIR)
+    plt.close()
+
+
+def figure_2_fsi_vs_cds_volatility(df, fsi_col, fsi_name, suffix):
+    """Figure 2: FSI vs CDS with Volatility"""
+    if fsi_col not in df.columns or 'cds_5y' not in df.columns or 'volatility' not in df.columns:
+        return
+
+    fig, ax1 = plt.subplots(figsize=FIGSIZE['double'])
+
+    # FSI (left axis)
+    line1, = ax1.plot(df['date'], df[fsi_col], color=COLORS['black'],
+                      linewidth=1.5, label=fsi_name)
+    ax1.set_ylabel('Financial Stress Index', color=COLORS['black'])
+    ax1.set_ylim(0, 1.05)
+    ax1.tick_params(axis='y', labelcolor=COLORS['black'])
+
+    # CDS and Volatility (right axis - normalized)
+    ax2 = ax1.twinx()
+
+    # Normalize CDS and volatility to 0-1 for comparison
+    cds_norm = (df['cds_5y'] - df['cds_5y'].min()) / (df['cds_5y'].max() - df['cds_5y'].min())
+    vol_norm = (df['volatility'] - df['volatility'].min()) / (df['volatility'].max() - df['volatility'].min())
+
+    line2, = ax2.plot(df['date'], cds_norm, color=COLORS['gray'],
+                      linewidth=1.5, linestyle='--', label='CDS 5Y (normalized)')
+    line3, = ax2.plot(df['date'], vol_norm, color=COLORS['light_gray'],
+                      linewidth=1.5, linestyle=':', label='IBOV Volatility (normalized)')
+    ax2.set_ylabel('Normalized Value', color=COLORS['gray'])
+    ax2.set_ylim(0, 1.05)
+    ax2.tick_params(axis='y', labelcolor=COLORS['gray'])
+
+    # Crisis shading
+    for (start, end), label in CRISIS_PERIODS.items():
+        start_dt = pd.to_datetime(start)
+        end_dt = pd.to_datetime(end)
+        if df['date'].min() <= end_dt and df['date'].max() >= start_dt:
+            ax1.axvspan(start_dt, end_dt, alpha=0.15,
+                        color=COLORS['fill_dark'], zorder=0)
+
+    ax1.set_xlabel('Date')
+
+    years = (df['date'].max() - df['date'].min()).days / 365
+    format_date_axis(ax1, years)
+
+    lines = [line1, line2, line3]
+    labels = [l.get_label() for l in lines]
+    ax1.legend(lines, labels, loc='upper left', framealpha=0.95)
+
+    ax1.grid(True, alpha=0.3)
+
+    save_figure(fig, f'figure_2_fsi_cds_volatility_{suffix}', FIGURES_DIR)
     plt.close()
 
 
 # =============================================================================
-# FIGURE 3: MAIN IRF RESULT (IMPROVED)
+# FIGURE 3: MAIN IRF RESULT
 # =============================================================================
 
 def figure_3_irf_main(df):
-    """Figure 3: Impulse Response Function - FSI Shock to CDS (Improved)"""
+    """Figure 3: Impulse Response Function - FSI Shock to CDS"""
     print("Generating Figure 3: IRF (Main Result)...")
 
     if 'cds_5y' not in df.columns:
@@ -381,7 +582,6 @@ def figure_3_irf_main(df):
 
     ax.set_xlabel('Months After Shock')
     ax.set_ylabel('Cumulative CDS Response (%)')
-    ax.set_title('Figure 3: Impulse Response - FSI Shock → CDS Spread')
 
     # Annotation
     cum_irf = result['cum_irf']
@@ -402,11 +602,11 @@ def figure_3_irf_main(df):
 
 
 # =============================================================================
-# FIGURE 4: METHODOLOGY COMPARISON (SIMPLIFIED)
+# FIGURE 4: METHODOLOGY COMPARISON
 # =============================================================================
 
 def figure_4_methodology_comparison(df):
-    """Figure 4: Comparison of FSI Construction Methods (Simplified)"""
+    """Figure 4: Comparison of FSI Construction Methods"""
     print("Generating Figure 4: Methodology Comparison...")
 
     if 'cds_5y' not in df.columns:
@@ -453,15 +653,19 @@ def figure_4_methodology_comparison(df):
         cum_irf = result['cum_irf']
         sig = result['sig_months']
 
-        ax.set_title(f'{name}\n(Cum: {cum_irf:.1f}%, Sig: {sig}/13)')
+        # Annotation box instead of title
+        textstr = f'{name}\nCumulative: {cum_irf:.1f}%\nSignificant: {sig}/13'
+        props = dict(boxstyle='round', facecolor='white', alpha=0.9,
+                     edgecolor=COLORS['light_gray'])
+        ax.text(0.97, 0.97, textstr, transform=ax.transAxes, fontsize=9,
+                verticalalignment='top', horizontalalignment='right', bbox=props)
+
         ax.set_xlabel('Months')
         if idx == 0:
             ax.set_ylabel('Cumulative CDS Response (%)')
 
         ax.grid(True, alpha=0.3)
 
-    plt.suptitle('Figure 4: Comparison of FSI Construction Methods',
-                 fontsize=12, y=1.02)
     plt.tight_layout()
 
     save_figure(fig, 'figure_4_methodology_comparison', FIGURES_DIR)
@@ -469,12 +673,13 @@ def figure_4_methodology_comparison(df):
 
 
 # =============================================================================
-# FIGURE 5: CRISIS PERIOD ANALYSIS
+# FIGURE 5: CRISIS PERIOD ANALYSIS (Individual and Combined versions)
 # =============================================================================
 
-def figure_5_crisis_analysis(df):
-    """Figure 5: FSI Behavior During Crisis Periods"""
-    print("Generating Figure 5: Crisis Period Analysis...")
+def figure_5_crisis_analysis_single(df, fsi_col, fsi_name, suffix):
+    """Figure 5: Single FSI During Crisis Periods"""
+    if fsi_col not in df.columns:
+        return
 
     crises = [
         ('Global Financial Crisis', '2008-01-01', '2010-06-30'),
@@ -484,7 +689,7 @@ def figure_5_crisis_analysis(df):
 
     fig, axes = plt.subplots(1, 3, figsize=(14, 4), sharey=True)
 
-    for idx, (title, start, end) in enumerate(crises):
+    for idx, (crisis_name, start, end) in enumerate(crises):
         ax = axes[idx]
 
         mask = (df['date'] >= start) & (df['date'] <= end)
@@ -492,12 +697,11 @@ def figure_5_crisis_analysis(df):
 
         if len(crisis_df) == 0:
             ax.text(0.5, 0.5, 'No Data', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title(title)
             continue
 
         # FSI
-        ax.plot(crisis_df['date'], crisis_df['dict_fsi'],
-                color=COLORS['black'], linewidth=1.5, label='FSI')
+        ax.plot(crisis_df['date'], crisis_df[fsi_col],
+                color=COLORS['black'], linewidth=1.5, label=fsi_name)
 
         # Normalized CDS
         if 'cds_5y' in crisis_df.columns:
@@ -512,7 +716,10 @@ def figure_5_crisis_analysis(df):
         ax.axhline(y=0.5, color=COLORS['light_gray'], linestyle=':',
                    linewidth=0.8, alpha=0.7)
 
-        ax.set_title(title)
+        # Crisis name as annotation
+        ax.text(0.5, 0.02, crisis_name, transform=ax.transAxes, fontsize=10,
+                ha='center', va='bottom', fontweight='normal')
+
         ax.set_xlabel('Date')
         if idx == 0:
             ax.set_ylabel('Index Value')
@@ -525,21 +732,137 @@ def figure_5_crisis_analysis(df):
         ax.legend(loc='upper right', fontsize=8)
         ax.grid(True, alpha=0.3)
 
-    plt.suptitle('Figure 5: FSI Behavior During Major Crisis Periods',
-                 fontsize=12, y=1.02)
     plt.tight_layout()
 
-    save_figure(fig, 'figure_5_crisis_analysis', FIGURES_DIR)
+    save_figure(fig, f'figure_5_crisis_analysis_{suffix}', FIGURES_DIR)
+    plt.close()
+
+
+def figure_5_crisis_analysis_all(df):
+    """Figure 5: All FSI Indices During Crisis Periods"""
+    crises = [
+        ('Global Financial Crisis', '2008-01-01', '2010-06-30'),
+        ('Brazilian Recession', '2014-06-01', '2017-06-30'),
+        ('COVID-19 Pandemic', '2019-09-01', '2021-03-31'),
+    ]
+
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4), sharey=True)
+
+    line_configs = [
+        ('dict_fsi', 'Dictionary FSI', COLORS['black'], '-'),
+        ('ml_fsi', 'ML FSI', COLORS['dark_gray'], '--'),
+        ('combined_fsi', 'Combined FSI', COLORS['gray'], ':'),
+    ]
+
+    for idx, (crisis_name, start, end) in enumerate(crises):
+        ax = axes[idx]
+
+        mask = (df['date'] >= start) & (df['date'] <= end)
+        crisis_df = df[mask].copy()
+
+        if len(crisis_df) == 0:
+            ax.text(0.5, 0.5, 'No Data', ha='center', va='center', transform=ax.transAxes)
+            continue
+
+        # All FSI indices
+        for fsi_col, label, color, linestyle in line_configs:
+            if fsi_col in crisis_df.columns:
+                ax.plot(crisis_df['date'], crisis_df[fsi_col],
+                        color=color, linewidth=1.5, linestyle=linestyle, label=label)
+
+        ax.axhline(y=0.5, color=COLORS['light_gray'], linestyle=':',
+                   linewidth=0.8, alpha=0.7)
+
+        # Crisis name as annotation
+        ax.text(0.5, 0.02, crisis_name, transform=ax.transAxes, fontsize=10,
+                ha='center', va='bottom', fontweight='normal')
+
+        ax.set_xlabel('Date')
+        if idx == 0:
+            ax.set_ylabel('Index Value')
+
+        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=6))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+
+        ax.set_ylim(0, 1.05)
+        ax.legend(loc='upper right', fontsize=8)
+        ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+
+    save_figure(fig, 'figure_5_crisis_analysis_all', FIGURES_DIR)
+    plt.close()
+
+
+def figure_5_crisis_with_volatility(df, fsi_col, fsi_name, suffix):
+    """Figure 5: FSI with Volatility During Crisis Periods"""
+    if fsi_col not in df.columns or 'volatility' not in df.columns:
+        return
+
+    crises = [
+        ('Global Financial Crisis', '2008-01-01', '2010-06-30'),
+        ('Brazilian Recession', '2014-06-01', '2017-06-30'),
+        ('COVID-19 Pandemic', '2019-09-01', '2021-03-31'),
+    ]
+
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4), sharey=True)
+
+    for idx, (crisis_name, start, end) in enumerate(crises):
+        ax = axes[idx]
+
+        mask = (df['date'] >= start) & (df['date'] <= end)
+        crisis_df = df[mask].copy()
+
+        if len(crisis_df) == 0:
+            ax.text(0.5, 0.5, 'No Data', ha='center', va='center', transform=ax.transAxes)
+            continue
+
+        # FSI
+        ax.plot(crisis_df['date'], crisis_df[fsi_col],
+                color=COLORS['black'], linewidth=1.5, label=fsi_name)
+
+        # Normalized Volatility
+        vol_min = crisis_df['volatility'].min()
+        vol_max = crisis_df['volatility'].max()
+        if vol_max > vol_min:
+            vol_norm = (crisis_df['volatility'] - vol_min) / (vol_max - vol_min)
+            ax.plot(crisis_df['date'], vol_norm,
+                    color=COLORS['gray'], linewidth=1.5, linestyle='--',
+                    label='IBOV Volatility (normalized)')
+
+        ax.axhline(y=0.5, color=COLORS['light_gray'], linestyle=':',
+                   linewidth=0.8, alpha=0.7)
+
+        # Crisis name as annotation
+        ax.text(0.5, 0.02, crisis_name, transform=ax.transAxes, fontsize=10,
+                ha='center', va='bottom', fontweight='normal')
+
+        ax.set_xlabel('Date')
+        if idx == 0:
+            ax.set_ylabel('Index Value')
+
+        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=6))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+
+        ax.set_ylim(0, 1.05)
+        ax.legend(loc='upper right', fontsize=8)
+        ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+
+    save_figure(fig, f'figure_5_crisis_volatility_{suffix}', FIGURES_DIR)
     plt.close()
 
 
 # =============================================================================
-# FIGURE 6: GRANGER CAUSALITY (SIMPLIFIED)
+# FIGURE 6: GRANGER CAUSALITY
 # =============================================================================
 
 def figure_6_granger_causality(df):
     """Figure 6: Simplified Granger Causality Results"""
-    print("Generating Figure 6: Granger Causality (Simplified)...")
+    print("Generating Figure 6: Granger Causality...")
 
     from statsmodels.tsa.stattools import grangercausalitytests
 
@@ -597,7 +920,6 @@ def figure_6_granger_causality(df):
                 f'p={pval:.3f}{sig}', ha='center', va='bottom', fontsize=10)
 
     ax.set_ylabel('-log₁₀(p-value)\n(higher = more significant)')
-    ax.set_title('Figure 6: Granger Causality Test Results')
     ax.legend(loc='upper right')
     ax.grid(True, alpha=0.3, axis='y')
 
@@ -606,12 +928,13 @@ def figure_6_granger_causality(df):
 
 
 # =============================================================================
-# FIGURE 7: REGIME ANALYSIS (SIMPLIFIED)
+# FIGURE 7: REGIME ANALYSIS (Individual and Combined versions)
 # =============================================================================
 
-def figure_7_regime_analysis(df):
-    """Figure 7: Financial Stress Regimes (Simplified, Academic Style)"""
-    print("Generating Figure 7: Regime Analysis...")
+def figure_7_regime_analysis_single(df, fsi_col, fsi_name, suffix):
+    """Figure 7: Financial Stress Regimes for Single FSI"""
+    if fsi_col not in df.columns:
+        return
 
     try:
         from statsmodels.tsa.regime_switching.markov_regression import MarkovRegression
@@ -619,12 +942,12 @@ def figure_7_regime_analysis(df):
         print("  Skipping: statsmodels MarkovRegression not available")
         return
 
-    # Use dict_fsi for regime analysis
-    fsi_data = df['dict_fsi'].dropna()
+    # Use specified FSI for regime analysis
+    fsi_data = df[fsi_col].dropna()
     dates = df.loc[fsi_data.index, 'date']
 
     if len(fsi_data) < 50:
-        print("  Skipping: Insufficient data")
+        print(f"  Skipping {suffix}: Insufficient data")
         return
 
     # Fit Markov Switching Model (2 regimes)
@@ -648,7 +971,6 @@ def figure_7_regime_analysis(df):
         smoothed_probs = pd.Series(smoothed_probs).rolling(4, min_periods=1, center=True).mean().values
 
     except Exception as e:
-        print(f"  Note: Using threshold method for regime detection")
         # Fallback: use rolling z-score threshold
         rolling_mean = fsi_data.rolling(12, min_periods=1).mean()
         rolling_std = fsi_data.rolling(12, min_periods=1).std().fillna(0.1)
@@ -661,7 +983,7 @@ def figure_7_regime_analysis(df):
 
     # Plot FSI
     ax.plot(dates, fsi_data.values, color=COLORS['black'],
-            linewidth=1.2, label='Dictionary FSI', zorder=3)
+            linewidth=1.2, label=fsi_name, zorder=3)
 
     # 12-month moving average
     ma = pd.Series(fsi_data.values).rolling(12, min_periods=1).mean()
@@ -693,16 +1015,14 @@ def figure_7_regime_analysis(df):
 
     ax.set_xlabel('Date')
     ax.set_ylabel('Financial Stress Index')
-    ax.set_title('Figure 7: Financial Stress Regimes (Markov Switching Model)')
     ax.set_ylim(0, 1.05)
 
     years = (dates.max() - dates.min()).days / 365
     format_date_axis(ax, years)
 
     # Add custom legend entry for shading
-    from matplotlib.patches import Patch
     legend_elements = [
-        plt.Line2D([0], [0], color=COLORS['black'], linewidth=1.2, label='Dictionary FSI'),
+        plt.Line2D([0], [0], color=COLORS['black'], linewidth=1.2, label=fsi_name),
         plt.Line2D([0], [0], color=COLORS['dark_gray'], linewidth=2, linestyle='--', label='12-Month MA'),
         Patch(facecolor=COLORS['fill_dark'], alpha=0.2, label='High Stress Regime'),
     ]
@@ -710,7 +1030,180 @@ def figure_7_regime_analysis(df):
 
     ax.grid(True, alpha=0.3)
 
-    save_figure(fig, 'figure_7_regime_analysis', FIGURES_DIR)
+    save_figure(fig, f'figure_7_regime_analysis_{suffix}', FIGURES_DIR)
+    plt.close()
+
+
+def figure_7_regime_analysis_all(df):
+    """Figure 7: Regime Analysis Comparison for All FSI Indices"""
+    try:
+        from statsmodels.tsa.regime_switching.markov_regression import MarkovRegression
+    except ImportError:
+        print("  Skipping: statsmodels MarkovRegression not available")
+        return
+
+    fsi_cols = ['dict_fsi', 'ml_fsi', 'combined_fsi']
+    available_cols = [col for col in fsi_cols if col in df.columns]
+
+    if len(available_cols) == 0:
+        return
+
+    fig, axes = plt.subplots(len(available_cols), 1, figsize=(14, 4*len(available_cols)), sharex=True)
+    if len(available_cols) == 1:
+        axes = [axes]
+
+    line_configs = {
+        'dict_fsi': ('Dictionary FSI', COLORS['black']),
+        'ml_fsi': ('ML FSI', COLORS['dark_gray']),
+        'combined_fsi': ('Combined FSI', COLORS['gray']),
+    }
+
+    for idx, fsi_col in enumerate(available_cols):
+        ax = axes[idx]
+        fsi_name, color = line_configs[fsi_col]
+
+        fsi_data = df[fsi_col].dropna()
+        dates = df.loc[fsi_data.index, 'date']
+
+        if len(fsi_data) < 50:
+            ax.text(0.5, 0.5, 'Insufficient Data', ha='center', va='center', transform=ax.transAxes)
+            continue
+
+        # Fit model or use threshold fallback
+        try:
+            model = MarkovRegression(fsi_data.values, k_regimes=2, switching_variance=True)
+            results = model.fit(disp=False)
+            regime_means = [results.params[f'const[{i}]'] for i in range(2)]
+            crisis_regime = 0 if regime_means[0] > regime_means[1] else 1
+            try:
+                smoothed_probs = results.smoothed_marginal_probabilities[:, crisis_regime]
+            except:
+                smoothed_probs = results.smoothed_marginal_probabilities[crisis_regime]
+            smoothed_probs = pd.Series(smoothed_probs).rolling(4, min_periods=1, center=True).mean().values
+        except:
+            rolling_mean = fsi_data.rolling(12, min_periods=1).mean()
+            rolling_std = fsi_data.rolling(12, min_periods=1).std().fillna(0.1)
+            z_score = (fsi_data - rolling_mean) / rolling_std
+            smoothed_probs = (z_score > 0.5).astype(float).rolling(4, min_periods=1).mean().values
+
+        # Plot
+        ax.plot(dates, fsi_data.values, color=color, linewidth=1.2, label=fsi_name, zorder=3)
+
+        # Shade high stress
+        crisis_mask = smoothed_probs > 0.5
+        in_crisis = False
+        crisis_start = None
+        for i, (date, is_crisis) in enumerate(zip(dates, crisis_mask)):
+            if is_crisis and not in_crisis:
+                crisis_start = date
+                in_crisis = True
+            elif not is_crisis and in_crisis:
+                ax.axvspan(crisis_start, dates.iloc[i-1], alpha=0.2, color=COLORS['fill_dark'], zorder=0)
+                in_crisis = False
+        if in_crisis:
+            ax.axvspan(crisis_start, dates.iloc[-1], alpha=0.2, color=COLORS['fill_dark'], zorder=0)
+
+        ax.axhline(y=0.5, color=COLORS['gray'], linestyle=':', linewidth=0.8, alpha=0.7)
+        ax.set_ylabel(fsi_name)
+        ax.set_ylim(0, 1.05)
+        ax.grid(True, alpha=0.3)
+
+        legend_elements = [
+            plt.Line2D([0], [0], color=color, linewidth=1.2, label=fsi_name),
+            Patch(facecolor=COLORS['fill_dark'], alpha=0.2, label='High Stress Regime'),
+        ]
+        ax.legend(handles=legend_elements, loc='upper left', framealpha=0.95)
+
+    axes[-1].set_xlabel('Date')
+    years = (df['date'].max() - df['date'].min()).days / 365
+    format_date_axis(axes[-1], years)
+
+    plt.tight_layout()
+
+    save_figure(fig, 'figure_7_regime_analysis_all', FIGURES_DIR)
+    plt.close()
+
+
+def figure_7_regime_with_volatility(df, fsi_col, fsi_name, suffix):
+    """Figure 7: Regime Analysis with IBOV Volatility overlay"""
+    if fsi_col not in df.columns or 'volatility' not in df.columns:
+        return
+
+    try:
+        from statsmodels.tsa.regime_switching.markov_regression import MarkovRegression
+    except ImportError:
+        return
+
+    fsi_data = df[fsi_col].dropna()
+    dates = df.loc[fsi_data.index, 'date']
+
+    if len(fsi_data) < 50:
+        return
+
+    # Fit model or use threshold fallback
+    try:
+        model = MarkovRegression(fsi_data.values, k_regimes=2, switching_variance=True)
+        results = model.fit(disp=False)
+        regime_means = [results.params[f'const[{i}]'] for i in range(2)]
+        crisis_regime = 0 if regime_means[0] > regime_means[1] else 1
+        try:
+            smoothed_probs = results.smoothed_marginal_probabilities[:, crisis_regime]
+        except:
+            smoothed_probs = results.smoothed_marginal_probabilities[crisis_regime]
+        smoothed_probs = pd.Series(smoothed_probs).rolling(4, min_periods=1, center=True).mean().values
+    except:
+        rolling_mean = fsi_data.rolling(12, min_periods=1).mean()
+        rolling_std = fsi_data.rolling(12, min_periods=1).std().fillna(0.1)
+        z_score = (fsi_data - rolling_mean) / rolling_std
+        smoothed_probs = (z_score > 0.5).astype(float).rolling(4, min_periods=1).mean().values
+
+    fig, ax1 = plt.subplots(figsize=FIGSIZE['double'])
+
+    # FSI (left axis)
+    line1, = ax1.plot(dates, fsi_data.values, color=COLORS['black'],
+                      linewidth=1.5, label=fsi_name, zorder=3)
+    ax1.set_ylabel('Financial Stress Index', color=COLORS['black'])
+    ax1.set_ylim(0, 1.05)
+    ax1.tick_params(axis='y', labelcolor=COLORS['black'])
+
+    # Shade high stress periods
+    crisis_mask = smoothed_probs > 0.5
+    in_crisis = False
+    crisis_start = None
+    for i, (date, is_crisis) in enumerate(zip(dates, crisis_mask)):
+        if is_crisis and not in_crisis:
+            crisis_start = date
+            in_crisis = True
+        elif not is_crisis and in_crisis:
+            ax1.axvspan(crisis_start, dates.iloc[i-1], alpha=0.2, color=COLORS['fill_dark'], zorder=0)
+            in_crisis = False
+    if in_crisis:
+        ax1.axvspan(crisis_start, dates.iloc[-1], alpha=0.2, color=COLORS['fill_dark'], zorder=0)
+
+    # Volatility (right axis)
+    ax2 = ax1.twinx()
+    vol_data = df.loc[fsi_data.index, 'volatility']
+    line2, = ax2.plot(dates, vol_data, color=COLORS['gray'],
+                      linewidth=1.5, linestyle='--', label='IBOV Volatility', zorder=2)
+    ax2.set_ylabel('IBOV Realized Volatility (%)', color=COLORS['gray'])
+    ax2.tick_params(axis='y', labelcolor=COLORS['gray'])
+
+    ax1.set_xlabel('Date')
+
+    years = (dates.max() - dates.min()).days / 365
+    format_date_axis(ax1, years)
+
+    # Combined legend
+    legend_elements = [
+        plt.Line2D([0], [0], color=COLORS['black'], linewidth=1.5, label=fsi_name),
+        plt.Line2D([0], [0], color=COLORS['gray'], linewidth=1.5, linestyle='--', label='IBOV Volatility'),
+        Patch(facecolor=COLORS['fill_dark'], alpha=0.2, label='High Stress Regime'),
+    ]
+    ax1.legend(handles=legend_elements, loc='upper left', framealpha=0.95)
+
+    ax1.grid(True, alpha=0.3)
+
+    save_figure(fig, f'figure_7_regime_volatility_{suffix}', FIGURES_DIR)
     plt.close()
 
 
@@ -805,13 +1298,46 @@ def main():
     print("FIGURES")
     print("-" * 50)
 
-    figure_1_fsi_timeseries(df)
-    figure_2_fsi_vs_cds(df)
+    # Figure 1: FSI Time Series
+    print("\nGenerating Figure 1 variants: FSI Time Series...")
+    for fsi_col, config in FSI_INDICES.items():
+        if fsi_col in df.columns:
+            figure_1_fsi_timeseries_single(df, fsi_col, config['name'], config['short'])
+            figure_1_fsi_with_volatility(df, fsi_col, config['name'], config['short'])
+    figure_1_fsi_timeseries_all(df)
+
+    # Figure 2: FSI vs CDS
+    print("Generating Figure 2 variants: FSI vs CDS...")
+    for fsi_col, config in FSI_INDICES.items():
+        if fsi_col in df.columns:
+            figure_2_fsi_vs_cds_single(df, fsi_col, config['name'], config['short'])
+            figure_2_fsi_vs_cds_volatility(df, fsi_col, config['name'], config['short'])
+    figure_2_fsi_vs_cds_all(df)
+
+    # Figure 3: IRF (main result)
     figure_3_irf_main(df)
+
+    # Figure 4: Methodology Comparison
     figure_4_methodology_comparison(df)
-    figure_5_crisis_analysis(df)
+
+    # Figure 5: Crisis Analysis
+    print("Generating Figure 5 variants: Crisis Analysis...")
+    for fsi_col, config in FSI_INDICES.items():
+        if fsi_col in df.columns:
+            figure_5_crisis_analysis_single(df, fsi_col, config['name'], config['short'])
+            figure_5_crisis_with_volatility(df, fsi_col, config['name'], config['short'])
+    figure_5_crisis_analysis_all(df)
+
+    # Figure 6: Granger Causality
     figure_6_granger_causality(df)
-    figure_7_regime_analysis(df)
+
+    # Figure 7: Regime Analysis
+    print("Generating Figure 7 variants: Regime Analysis...")
+    for fsi_col, config in FSI_INDICES.items():
+        if fsi_col in df.columns:
+            figure_7_regime_analysis_single(df, fsi_col, config['name'], config['short'])
+            figure_7_regime_with_volatility(df, fsi_col, config['name'], config['short'])
+    figure_7_regime_analysis_all(df)
 
     # Generate tables
     print("\n" + "-" * 50)
