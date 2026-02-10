@@ -161,7 +161,8 @@ FinStress-News-Based-paper/
     │   ├── figure_3_irf_main.png
     │   ├── figure_4_methodology_comparison.png
     │   ├── figure_5_crisis_analysis.png
-    │   ├── figure_6_predictive_correlation.png
+    │   ├── figure_6_granger_causality.png
+    │   ├── figure_7_regime_analysis.png
     │   ├── table_1_summary_statistics.csv
     │   └── table_2_irf_results.csv
     │
@@ -241,18 +242,19 @@ Where:
 
 ### Table 2: IRF Results Summary
 
-| Method | Cumulative IRF | Significant Months | Peak Response |
-|--------|----------------|-------------------|---------------|
-| Dictionary FSI | **+0.846** | **13/13** | 0.087 (Month 1) |
-| ML FSI | -0.281 | 0/13 | 0.033 (Month 5) |
-| Combined FSI | +0.429 | 5/13 | 0.057 (Month 0) |
+| Method | Cumulative IRF (%) | Significant Months |
+|--------|-------------------|-------------------|
+| Dictionary FSI | **+81.45** | **13/13** |
+| ML FSI | -37.23 | 2/13 |
+| Combined FSI | +33.44 | 3/13 |
 
 ### Interpretation
 
 A one-standard-deviation increase in the Dictionary FSI predicts:
-- **Immediate effect**: 8.7% increase in CDS spread (Month 1)
-- **Cumulative effect**: 84.6% cumulative increase over 12 months
+- **Cumulative effect**: 81.45% cumulative CDS log-return increase over 12 months
 - **Persistence**: Significant effects in all 13 months (p < 0.10)
+- **ML FSI inverted**: Shows negative cumulative effect (stress predicts CDS decline - counterintuitive)
+- **Combined FSI diluted**: Simple combination destroys signal due to negative correlation between indices
 
 ---
 
@@ -285,19 +287,22 @@ All FSI outputs use a standardized 0-1 scale:
 Shows the Dictionary-based FSI for Brazil (2008-2025) with 12-month moving average and crisis period shading (GFC, Brazilian Recession, COVID-19).
 
 ### Figure 2: FSI vs CDS
-Dual-axis comparison of FSI with Brazil 5-Year CDS spread, demonstrating strong co-movement (r = 0.67).
+Dual-axis comparison of FSI with Brazil 5-Year CDS spread, demonstrating strong co-movement.
 
 ### Figure 3: Impulse Response Function (Main Result)
-Local Projections IRF showing CDS response to FSI shock with 90% and 95% confidence intervals.
+Local Projections IRF showing cumulative CDS response to FSI shock with 90% and 95% confidence intervals. Key result: 81.45% cumulative response with 13/13 significant months.
 
 ### Figure 4: Methodology Comparison
-Side-by-side IRF comparison of Dictionary, ML, and Combined FSI approaches.
+Side-by-side IRF comparison of Dictionary, ML, and Combined FSI approaches. Shows Dictionary FSI significantly outperforms alternatives.
 
 ### Figure 5: Crisis Period Analysis
 Detailed FSI behavior during major crisis episodes (GFC, Brazilian Recession, COVID-19).
 
-### Figure 6: Predictive Correlation
-Bar chart showing FSI correlation with future CDS returns at different horizons.
+### Figure 6: Granger Causality
+Simplified bar chart showing bidirectional Granger causality test results between FSI and CDS.
+
+### Figure 7: Regime Analysis
+Financial stress regime classification using threshold detection with high-stress periods shaded. Grayscale academic styling.
 
 ---
 

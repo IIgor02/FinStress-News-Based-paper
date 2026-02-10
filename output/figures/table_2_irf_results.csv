@@ -1,4 +1,4 @@
-Method,Cumulative IRF,Significant Months (p<0.1),Peak Response,Peak Month
-Dictionary FSI,0.846,13,0.087,1
-ML FSI,-0.281,0,0.033,5
-Combined FSI,0.429,5,0.057,0
+Method,Cumulative IRF (%),Significant Months
+Dictionary FSI,81.45,13/13
+ML FSI,-37.23,2/13
+Combined FSI,33.44,3/13

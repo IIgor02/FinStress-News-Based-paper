@@ -1,4 +1,4 @@
-Variable,Mean,Std. Dev.,Min,Max,Observations
+Variable,Mean,Std. Dev.,Min,Max,N
 Dictionary FSI,0.252,0.176,0.000,1.000,214
 ML FSI,0.623,0.183,0.000,1.000,214
 Combined FSI,0.438,0.117,0.142,0.779,214
