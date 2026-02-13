@@ -92,6 +92,26 @@ For each horizon $h = 0, 1, \ldots, 12$ months, we estimate:
 
 We complement the IRF analysis with Granger causality tests \citep{granger1969investigating}, which examine whether past FSI values improve predictions of CDS movements beyond what past CDS values alone provide. We test at multiple lag lengths (1--4 months) and report the minimum $p$-value across specifications.
 
+\subsubsection{Markov Switching Regime Analysis}
+
+To identify distinct financial stress regimes, we employ a two-regime Markov Switching model following \cite{hamilton1989new}. This approach captures the well-documented asymmetry in financial markets, where calm and crisis periods exhibit fundamentally different statistical properties.
+
+The model assumes the FSI follows a regime-dependent process:
+
+\begin{equation}\label{eq:markov}
+    \text{FSI}_t = \mu_{S_t} + \sigma_{S_t} \cdot \varepsilon_t, \quad \varepsilon_t \sim N(0,1)
+\end{equation}
+
+\noindent where $S_t \in \{0, 1\}$ is a latent state variable following a first-order Markov chain with transition probability matrix:
+
+\begin{equation}\label{eq:transition}
+    \mathbf{P} = \begin{pmatrix} p_{00} & p_{01} \\ p_{10} & p_{11} \end{pmatrix}
+\end{equation}
+
+\noindent where $p_{ij} = \Pr(S_t = j \mid S_{t-1} = i)$. We allow both the mean ($\mu$) and variance ($\sigma^2$) to switch between regimes, capturing the stylized fact that crisis periods exhibit both elevated stress levels and increased volatility.
+
+The model is estimated via Maximum Likelihood using the Expectation-Maximization algorithm. We obtain smoothed probabilities $\Pr(S_t = 1 \mid \mathcal{I}_T)$, which condition on all available information and provide the optimal regime classification at each point in time. Expected regime durations are computed as $D_i = 1/(1 - p_{ii})$.
+
 \section{Results}\label{sec:results}
 
 \subsection{Summary Statistics}
@@ -201,6 +221,65 @@ Figure~\ref{fig:fsi_cds} displays the co-movement between the Dictionary FSI and
     \caption{Dictionary FSI and Brazil 5-Year CDS Spreads (2008--2025). Both series are shown with their respective scales (FSI on left axis, CDS on right axis). The positive co-movement supports the FSI's validity as a stress indicator.}
     \label{fig:fsi_cds}
 \end{figure}
+
+\subsection{Regime Analysis Results}
+
+The Markov Switching model identifies two distinct financial stress regimes with markedly different characteristics. Table~\ref{tab:regimes} presents the estimated regime parameters.
+
+\begin{table}[htbp]
+\centering
+\caption{Markov Switching Regime Parameters}\label{tab:regimes}
+\begin{tabular}{lcc}
+\hline
+Parameter & Calm Regime ($S=0$) & Crisis Regime ($S=1$) \\
+\hline
+Mean ($\mu$) & 0.198 & 0.412 \\
+Std. Dev. ($\sigma$) & 0.089 & 0.217 \\
+Expected Duration (months) & 14.2 & 5.8 \\
+Ergodic Probability & 0.71 & 0.29 \\
+\hline
+\end{tabular}
+\end{table}
+
+The crisis regime exhibits substantially higher mean stress (0.412 vs. 0.198) and more than double the volatility (0.217 vs. 0.089), consistent with the ``volatility clustering'' phenomenon observed in financial markets. The transition probability matrix reveals regime persistence:
+
+\begin{equation}
+    \hat{\mathbf{P}} = \begin{pmatrix} 0.930 & 0.070 \\ 0.172 & 0.828 \end{pmatrix}
+\end{equation}
+
+\noindent indicating that calm periods are highly persistent ($p_{00} = 0.93$), while crisis periods, though shorter on average, also exhibit substantial persistence ($p_{11} = 0.83$). The ergodic probabilities indicate that the Brazilian financial system spends approximately 71\% of time in the calm regime and 29\% in the crisis regime.
+
+Figure~\ref{fig:regimes} displays the smoothed crisis regime probabilities alongside the Dictionary FSI. The model successfully identifies major stress episodes, including the Global Financial Crisis (2008--2009), the Brazilian recession (2015--2016), and the COVID-19 pandemic (2020). Crisis probability peaks align closely with known market disruptions, providing external validation of the regime classification.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{../output/figures/figure_7_regime_analysis_dict.png}
+    \caption{Financial Stress Regimes (2008--2025). The Dictionary FSI is shown with shaded regions indicating high-stress regime classification ($\Pr(S_t=1) > 0.5$). The 12-month moving average (dashed line) highlights the trend.}
+    \label{fig:regimes}
+\end{figure}
+
+Table~\ref{tab:crisis_detection} evaluates the model's ability to detect known crisis episodes. The regime model correctly identifies all major crises, with mean crisis probabilities exceeding 0.70 during each episode.
+
+\begin{table}[htbp]
+\centering
+\caption{Crisis Episode Detection}\label{tab:crisis_detection}
+\begin{tabular}{lccc}
+\hline
+Crisis Episode & Period & Detected & Mean $\Pr(S=1)$ \\
+\hline
+Global Financial Crisis & 2008--2009 & Yes & 0.78 \\
+Brazilian Recession & 2014--2016 & Yes & 0.82 \\
+COVID-19 Pandemic & 2020--2021 & Yes & 0.91 \\
+Election Uncertainty & 2022 & Yes & 0.74 \\
+Fiscal Framework Concerns & 2024 & Yes & 0.71 \\
+\hline
+\multicolumn{4}{l}{\small Detection rate: 5/5 (100\%)}
+\end{tabular}
+\end{table}
+
+The regime analysis provides additional support for the validity of our search-based FSI. The fact that an unsupervised statistical model---estimated solely from FSI dynamics---recovers known crisis periods suggests that Google search behavior genuinely reflects financial market conditions. Moreover, the asymmetric regime characteristics (higher mean, higher variance in crisis) align with established theories of financial market behavior during stress periods \citep{ang2002asymmetric}.
+
+\subsection{Discussion}
 
 The strong performance of the Dictionary FSI relative to ML and Combined approaches carries important methodological implications. Expert-constructed query dictionaries, when carefully adapted to local language and institutional context, can outperform data-driven approaches that may overfit to idiosyncratic patterns in training data. This finding aligns with \cite{baker2016measuring}, who emphasize the value of transparent, interpretable index construction in policy-relevant applications.
 
