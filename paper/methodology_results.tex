@@ -1,32 +1,18 @@
-% Methodology and Results Section
-% A News-Based Financial Stress Index: Evidence from Brazilian Markets
-% Maximum length: ~2000 words
-
 \section{Methodology}\label{sec:methodology}
 
-This section describes our methodology for constructing the Financial Stress Index (FSI) and analyzing its predictive power for sovereign credit risk. We employ three distinct approaches to FSI construction and use Local Projections Impulse Response Functions to assess predictive relationships.
+This section describes our methodology for constructing the Financial Stress Index and analyzing its predictive power for sovereign credit risk. We employ three distinct approaches to FSI construction and use Local Projections Impulse Response Functions to assess predictive relationships.
 
 \subsection{Data Sources and Sample Period}
 
-Our analysis spans February 2008 to November 2025, covering 214 monthly observations. We collect data from three primary sources:
+Our analysis spans February 2008 to November 2025, covering 214 monthly observations. We collect data from three primary sources: (i) Google Trends; an Weekly Search Volume Index (SVI) data for Portuguese-language financial stress queries. Google Trends provides normalized search intensity on a 0--100 scale, where 100 represents peak search interest for a given term within the selected period and region. (ii) Brazil 5-Year CDS Spreads; an Daily Credit Default Swap spreads obtained from Investing.com, measuring the cost of insurance against Brazilian sovereign default. Higher CDS spreads indicate greater perceived default risk.
 
-\begin{enumerate}
-    \item \textbf{Google Trends}: Weekly Search Volume Index (SVI) data for Portuguese-language financial stress queries. Google Trends provides normalized search intensity on a 0--100 scale, where 100 represents peak search interest for a given term within the selected period and region.
-
-    \item \textbf{Brazil 5-Year CDS Spreads}: Daily Credit Default Swap spreads obtained from Investing.com, measuring the cost of insurance against Brazilian sovereign default. Higher CDS spreads indicate greater perceived default risk.
-
-    \item \textbf{IBOVESPA}: Daily data from Yahoo Finance, from which we compute 21-day realized volatility as a measure of equity market stress.
-\end{enumerate}
-
-We aggregate all series to monthly frequency to reduce noise and ensure alignment across data sources.
+And, finally we use (iii) IBOVESPA Daily data from Yahoo Finance, from which we compute 21-day realized volatility as a measure of equity market stress. We aggregate all series to monthly frequency to reduce noise and ensure alignment across data sources.
 
 \subsection{FSI Construction Methods}
 
 We implement three methodologically distinct approaches to constructing the FSI, following established literature in text-based financial indicators.
 
-\subsubsection{Dictionary-Based FSI}
-
-Following \cite{da2011search}, we construct a dictionary-based FSI using pre-specified search queries that capture financial stress in the Brazilian context. Our query set comprises 25 Portuguese terms organized into five tiers:
+Following \citet{da2011search}, we construct a dictionary-based FSI using pre-specified search queries that capture financial stress in the Brazilian context. Our query set comprises 25 Portuguese terms organized into five tiers:
 
 \begin{itemize}
     \item \textit{Tier 1} (Crisis terms): ``crise financeira,'' ``p\^anico financeiro,'' ``crash bolsa''
@@ -44,9 +30,9 @@ The FSI is computed as a weighted average of Search Volume Indices:
 
 \noindent where $\text{SVI}_{i,t}$ denotes the Search Volume Index for query $i$ at time $t$, $w_i$ represents the tier weight (1.5 for Tier 1, 1.2 for Tier 2, and 1.0 for remaining tiers), and $N$ is the total number of queries. The resulting index is normalized to a $[0, 1]$ scale using min-max normalization, where 0 indicates minimum observed stress and 1 indicates maximum stress.
 
-\subsubsection{Machine Learning FSI}
+\subsection{Machine Learning FSI}
 
-Following \cite{garcia2023machine}, we implement a LASSO regression approach that learns which search queries best predict future market declines. The model regresses next-period IBOVESPA returns on current-period search volumes:
+Following \citet{garcia2023real}, we implement a LASSO regression approach that learns which search queries best predict future market declines. The model regresses next-period IBOVESPA returns on current-period search volumes:
 
 \begin{equation}\label{eq:lasso}
     r_{t+1} = \alpha + \sum_{i=1}^{N} \beta_i \cdot \text{SVI}_{i,t} + \varepsilon_{t+1}
@@ -54,9 +40,9 @@ Following \cite{garcia2023machine}, we implement a LASSO regression approach tha
 
 \noindent where $r_{t+1}$ is the IBOVESPA return from $t$ to $t+1$, $\beta_i$ are coefficients subject to LASSO penalization ($\sum|\beta_i| \leq \lambda$), and $\lambda$ is the regularization parameter selected via cross-validation. The ML-FSI is defined as the negative of the predicted return, such that higher values indicate anticipated market declines.
 
-\subsubsection{Combined FSI}
+\subsection{Combined FSI}
 
-We construct a combined index using inverse-variance weighting of the dictionary and ML approaches:
+Finally, we construct a combined index using inverse-variance weighting of the dictionary and ML approaches:
 
 \begin{equation}\label{eq:combined}
     \text{FSI}_t^{\text{Comb}} = \frac{\sigma_{\text{ML}}^{-2} \cdot \text{FSI}_t^{\text{Dict}} + \sigma_{\text{Dict}}^{-2} \cdot \text{FSI}_t^{\text{ML}}}{\sigma_{\text{ML}}^{-2} + \sigma_{\text{Dict}}^{-2}}
@@ -97,17 +83,7 @@ The dictionaries are carefully constructed to reflect Brazilian Portuguese finan
 
 \subsection{Econometric Framework}
 
-\subsubsection{Stationarity and Data Transformations}
-
-We conduct Augmented Dickey-Fuller (ADF) tests for all variables. CDS levels exhibit non-stationarity ($p = 0.09$), which could produce misleading results in time series regressions. Following \cite{hamilton1994time}, we transform CDS to log-returns:
-
-\begin{equation}\label{eq:cds_transform}
-    \Delta \log(\text{CDS})_t = \log(\text{CDS}_t) - \log(\text{CDS}_{t-1})
-\end{equation}
-
-The FSI measures are bounded between 0 and 1 and exhibit stationarity ($p < 0.01$ for ADF tests). We standardize all variables to have zero mean and unit variance for comparability of effect sizes.
-
-\subsubsection{Local Projections Impulse Response Functions}
+We conduct Augmented Dickey-Fuller (ADF) tests for all variables. CDS levels exhibit non-stationarity ($p = 0.09$), which could produce misleading results in time series regressions. Following \citet{hamilton1994time}, we transform CDS to log-returns. The FSI measures are bounded between 0 and 1 and exhibit stationarity ($p < 0.01$ for ADF tests). We standardize all variables to have zero mean and unit variance for comparability of effect sizes.
 
 To assess the predictive power of the FSI for sovereign credit risk, we employ Local Projections \citep{jorda2005estimation}, which directly estimate the response of CDS spreads to FSI innovations at each forecast horizon. This method is more robust than Vector Autoregression for potentially misspecified systems and handles persistent variables effectively.
 
@@ -119,13 +95,9 @@ For each horizon $h = 0, 1, \ldots, 12$ months, we estimate:
 
 \noindent where $\sum_{j=0}^{h} \Delta \log(\text{CDS})_{t+j}$ is the cumulative log-return of CDS spreads from $t$ to $t+h$, $\beta_h$ is the cumulative impulse response coefficient at horizon $h$ measuring the cumulative percentage change in CDS spreads following a one-standard-deviation FSI innovation, $\Delta \text{FSI}_t$ is the change in the FSI at time $t$, and $p = 4$ lags of CDS log-returns are included as controls. We compute Newey-West heteroskedasticity and autocorrelation consistent (HAC) standard errors with bandwidth $h + 1$ to account for overlapping observations \citep{newey1987simple}.
 
-\subsubsection{Granger Causality Tests}
-
 We complement the IRF analysis with Granger causality tests \citep{granger1969investigating}, which examine whether past FSI values improve predictions of CDS movements beyond what past CDS values alone provide. We test at multiple lag lengths (1--4 months) and report the minimum $p$-value across specifications.
 
-\subsubsection{Markov Switching Regime Analysis}
-
-To identify distinct financial stress regimes, we employ a two-regime Markov Switching model following \cite{hamilton1989new}. This approach captures the well-documented asymmetry in financial markets, where calm and crisis periods exhibit fundamentally different statistical properties.
+Finally, to identify distinct financial stress regimes, we employ a two-regime Markov Switching model following \cite{hamilton1989new}. This approach captures the well-documented asymmetry in financial markets, where calm and crisis periods exhibit fundamentally different statistical properties.
 
 The model assumes the FSI follows a regime-dependent process:
 
@@ -169,29 +141,25 @@ The Dictionary FSI demonstrates strong correlation with IBOVESPA volatility ($r 
 
 \subsection{Crisis Period Analysis}
 
-Figure~\ref{fig:crisis} displays the Dictionary FSI during major Brazilian financial episodes. The index successfully captures stress during the COVID-19 crash (March 2020), reaching 0.76---the highest value in our sample. The 2022 election uncertainty period also registers elevated stress (0.63), as do fiscal framework concerns in 2024 (0.48). The Global Financial Crisis period shows moderate elevation (0.39), though lower than more recent events, possibly reflecting increased internet penetration and financial market attention over time.
+Figure~\ref{fig:crisis} displays the Dictionary FSI during major Brazilian financial episodes. The index successfully captures stress during the COVID-19 crash (March 2020), reaching 0.76, the highest value in our sample. The 2022 election uncertainty period also registers elevated stress (0.63), as do fiscal framework concerns in 2024 (0.48). The Global Financial Crisis period shows moderate elevation (0.39), though lower than more recent events, possibly reflecting increased internet penetration and financial market attention over time.
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.95\textwidth]{../output/figures/figure_5_crisis_analysis_dict.png}
+    \includegraphics[width=1.0\textwidth]{figure_1_crisis_analysis_dict.png}
     \caption{Dictionary FSI During Major Crisis Periods. Shaded regions indicate known crisis episodes. The index reaches its maximum during the COVID-19 crash (0.76) and shows elevated values during election uncertainty (0.63) and fiscal concerns (0.48).}
     \label{fig:crisis}
 \end{figure}
 
-\subsection{Predictive Power for Sovereign Credit Risk}
-
-Figure~\ref{fig:irf_main} presents our main finding: the cumulative impulse response of CDS spreads to a one-standard-deviation Dictionary FSI shock. The response is positive and statistically significant at all 13 horizons (months 0--12), indicating that increases in search-based stress reliably predict subsequent widening of sovereign credit spreads.
+Figure~\ref{fig:irf_main} presents our main finding: the cumulative impulse response of CDS spreads to a one-standard-deviation Dictionary FSI shock. The response is positive and statistically significant at all 13 horizons, indicating that increases in search-based stress reliably predict subsequent widening of sovereign credit spreads.
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.85\textwidth]{../output/figures/figure_3_irf_main.png}
+    \includegraphics[width=0.85\textwidth]{figure_2_irf_main.png}
     \caption{Cumulative Impulse Response of CDS Spreads to Dictionary FSI Shock. The solid line shows point estimates; shaded regions indicate 90\% and 95\% confidence intervals. The response is positive and significant at all horizons, with cumulative effect of +81.45\% after 12 months.}
     \label{fig:irf_main}
 \end{figure}
 
 The cumulative effect reaches +81.45\% after 12 months, meaning a one-standard-deviation increase in the FSI predicts an 81.45\% cumulative increase in CDS spreads over the following year. This substantial magnitude reflects the FSI's ability to capture shifts in market sentiment that precede credit risk repricing.
-
-\subsection{Methodology Comparison}
 
 Figure~\ref{fig:comparison} compares the predictive performance across our three FSI construction methods. The Dictionary FSI substantially outperforms alternatives:
 
@@ -211,7 +179,7 @@ Combined FSI & +33.44 & 3/13 \\
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.95\textwidth]{../output/figures/figure_4_methodology_comparison.png}
+    \includegraphics[width=\textwidth]{figure_3_methodology_comparison.png}
     \caption{Comparison of IRF Results Across FSI Construction Methods. The Dictionary FSI (blue) shows strong, persistent positive response. The ML FSI (orange) shows inverted behavior with negative coefficients. The Combined FSI (black) shows diluted predictive power.}
     \label{fig:comparison}
 \end{figure}
@@ -242,18 +210,16 @@ Volatility & Dictionary FSI & 0.012 & ** \\
 
 The bidirectional causality between volatility and the Dictionary FSI suggests feedback mechanisms: search-based stress both anticipates and responds to market movements, consistent with theories of information diffusion in financial markets.
 
-\subsection{Relationship with CDS Spreads}
+\subsection{Relationship with CDS Spreads and Regime Analysis}
 
 Figure~\ref{fig:fsi_cds} displays the co-movement between the Dictionary FSI and CDS spreads over our sample period. The two series exhibit clear positive correlation, with FSI spikes typically preceding or coinciding with CDS spread increases. Notable alignment appears during the COVID-19 crisis, the 2022 election period, and recurring fiscal uncertainty episodes.
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.95\textwidth]{../output/figures/figure_2_fsi_vs_cds_dict.png}
+    \includegraphics[width=0.95\textwidth]{figure_4_fsi_vs_cds_dict.png}
     \caption{Dictionary FSI and Brazil 5-Year CDS Spreads (2008--2025). Both series are shown with their respective scales (FSI on left axis, CDS on right axis). The positive co-movement supports the FSI's validity as a stress indicator.}
     \label{fig:fsi_cds}
 \end{figure}
-
-\subsection{Regime Analysis Results}
 
 The Markov Switching model identifies two distinct financial stress regimes with markedly different characteristics. Table~\ref{tab:regimes} presents the estimated regime parameters.
 
@@ -284,7 +250,7 @@ Figure~\ref{fig:regimes} displays the smoothed crisis regime probabilities along
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.95\textwidth]{../output/figures/figure_7_regime_analysis_dict.png}
+    \includegraphics[width=0.95\textwidth]{figure_5_regime_analysis_dict.png}
     \caption{Financial Stress Regimes (2008--2025). The Dictionary FSI is shown with shaded regions indicating high-stress regime classification ($\Pr(S_t=1) > 0.5$). The 12-month moving average (dashed line) highlights the trend.}
     \label{fig:regimes}
 \end{figure}
@@ -304,87 +270,7 @@ COVID-19 Pandemic & 2020--2021 & Yes & 0.91 \\
 Election Uncertainty & 2022 & Yes & 0.74 \\
 Fiscal Framework Concerns & 2024 & Yes & 0.71 \\
 \hline
-\multicolumn{4}{l}{\small Detection rate: 5/5 (100\%)}
 \end{tabular}
 \end{table}
 
-The regime analysis provides additional support for the validity of our search-based FSI. The fact that an unsupervised statistical model---estimated solely from FSI dynamics---recovers known crisis periods suggests that Google search behavior genuinely reflects financial market conditions. Moreover, the asymmetric regime characteristics (higher mean, higher variance in crisis) align with established theories of financial market behavior during stress periods \citep{ang2002asymmetric}.
-
-\subsection{News-Based FSI Results}
-
-The news-based FSI provides an alternative measure of financial stress derived from professional financial journalism rather than retail investor search behavior. Table~\ref{tab:news_summary} presents descriptive statistics for the news-based index.
-
-\begin{table}[htbp]
-\centering
-\caption{News-Based FSI Summary Statistics}\label{tab:news_summary}
-\begin{tabular}{lc}
-\hline
-Statistic & Value \\
-\hline
-Sample Period & Jun 2002 -- Dec 2025 \\
-Total Articles Analyzed & 33,881 \\
-Articles with Stress Co-occurrence & 6,047 (17.8\%) \\
-Weekly Observations & 929 \\
-Mean FSI & 0.125 \\
-Std. Dev. & 0.124 \\
-Min & 0.000 \\
-Max & 1.000 \\
-\hline
-\end{tabular}
-\end{table}
-
-The news-based FSI exhibits substantial time variation, with a mean of 0.125 and standard deviation of 0.124 on the normalized $[0, 1]$ scale. Approximately 17.8\% of all articles meet the co-occurrence criteria for stress classification, indicating that financial stress is a recurring but not dominant theme in Brazilian financial journalism.
-
-\subsubsection{Crisis Episode Detection}
-
-Figure~\ref{fig:news_fsi} displays the news-based FSI over our sample period. The index successfully captures major stress episodes, with elevated values during known crisis periods.
-
-\begin{figure}[htbp]
-    \centering
-    \includegraphics[width=0.95\textwidth]{../output/news_fsi_analysis.png}
-    \caption{News-Based Financial Stress Index (2002--2025). Panel A shows the weekly FSI with high-stress periods (FSI $>$ 0.5) shaded in red and low-stress periods in green. Panel B displays article counts, distinguishing total articles from stress-classified articles. Panel C shows IBOVESPA realized volatility for comparison.}
-    \label{fig:news_fsi}
-\end{figure}
-
-Table~\ref{tab:news_peaks} presents the highest-stress weeks in our sample (restricted to weeks with at least 10 articles for robustness). The peak stress weeks align with significant market events, including periods of political uncertainty, fiscal concerns, and market corrections.
-
-\begin{table}[htbp]
-\centering
-\caption{Highest News-Based FSI Weeks (10+ Articles)}\label{tab:news_peaks}
-\begin{tabular}{lccc}
-\hline
-Week & FSI & Stress Articles & Total Articles \\
-\hline
-Mar 25, 2019 & 0.634 & 7 & 10 \\
-Apr 22, 2024 & 0.615 & 8 & 11 \\
-Jun 19, 2023 & 0.512 & 13 & 18 \\
-Apr 9, 2007 & 0.510 & 7 & 12 \\
-Jun 9, 2014 & 0.473 & 27 & 41 \\
-\hline
-\end{tabular}
-\end{table}
-
-\subsubsection{Comparison with Google Trends FSI}
-
-The news-based and Google Trends-based FSI measures capture complementary aspects of financial stress. The Dictionary FSI reflects retail investor attention and concern, while the News FSI captures the intensity of stress-related coverage in professional financial media.
-
-The Granger causality results in Table~\ref{tab:granger} indicate that the Dictionary FSI Granger-causes the News FSI ($p = 0.004$), suggesting that retail investor search behavior leads professional media coverage. This finding is consistent with the information diffusion hypothesis: retail investors may react to early stress signals before journalists compile and publish their analysis.
-
-\subsubsection{Methodological Implications}
-
-The news-based approach offers several advantages over search-based measures:
-
-\begin{enumerate}
-    \item \textit{Professional filtering}: News articles undergo editorial review, potentially reducing noise from irrelevant searches
-    \item \textit{Longer sample period}: News archives extend further back than Google Trends data (2002 vs. 2008)
-    \item \textit{Content depth}: Full article text provides richer context than search query counts
-\end{enumerate}
-
-However, the news-based FSI also has limitations. Coverage intensity varies by news source, and editorial decisions may introduce selection bias. The two-way co-occurrence method, while more inclusive than three-way co-occurrence, may still miss nuanced stress discussions that do not use explicit dictionary terms.
-
-\subsection{Discussion}
-
-The strong performance of the Dictionary FSI relative to ML and Combined approaches carries important methodological implications. Expert-constructed query dictionaries, when carefully adapted to local language and institutional context, can outperform data-driven approaches that may overfit to idiosyncratic patterns in training data. This finding aligns with \cite{baker2016measuring}, who emphasize the value of transparent, interpretable index construction in policy-relevant applications.
-
-\endantml:parameter>
-</invoke>
+The regime analysis provides additional support for the validity of our search-based FSI. The fact that an unsupervised statistical model, estimated solely from FSI dynamics, recovers known crisis periods suggests that Google search behavior genuinely reflects financial market conditions. Moreover, the asymmetric regime characteristics (higher mean, higher variance in crisis) align with established theories of financial market behavior during stress periods \citep{ang2002asymmetric}.
