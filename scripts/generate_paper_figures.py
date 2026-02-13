@@ -53,6 +53,7 @@ FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 FSI_INDICES = {
     'dict_fsi': {'name': 'Dictionary FSI', 'short': 'dict'},
     'ml_fsi': {'name': 'ML FSI', 'short': 'ml'},
+    'news_fsi': {'name': 'News FSI', 'short': 'news'},
     'combined_fsi': {'name': 'Combined FSI', 'short': 'combined'},
 }
 
@@ -1228,6 +1229,7 @@ def generate_tables(df):
     variables = [
         ('dict_fsi', 'Dictionary FSI'),
         ('ml_fsi', 'ML FSI'),
+        ('news_fsi', 'News FSI'),
         ('combined_fsi', 'Combined FSI'),
         ('cds_5y', 'CDS 5Y (bps)'),
         ('volatility', 'IBOV Volatility (%)'),
@@ -1252,7 +1254,7 @@ def generate_tables(df):
     # Table 2: IRF Results
     if 'cds_5y' in df.columns:
         methods = []
-        for col, name in [('dict_fsi', 'Dictionary FSI'), ('ml_fsi', 'ML FSI'), ('combined_fsi', 'Combined FSI')]:
+        for col, name in [('dict_fsi', 'Dictionary FSI'), ('ml_fsi', 'ML FSI'), ('news_fsi', 'News FSI'), ('combined_fsi', 'Combined FSI')]:
             if col in df.columns:
                 result = compute_lp_irf_improved(df, col, 'cds_5y', max_horizon=12, n_lags=2)
                 methods.append({

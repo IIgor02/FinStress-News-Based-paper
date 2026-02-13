@@ -95,7 +95,7 @@ where $p_{ij} = \Pr(S_t = j \mid S_{t-1} = i)$. We allow both the mean ($\mu$) a
 
 \subsection{Summary Statistics and Validation}
 
-Table~\ref{tab:summary} presents descriptive statistics for our analysis variables. The Dictionary FSI exhibits a mean of 0.252 with substantial variation (standard deviation of 0.176), indicating meaningful time-series dynamics in search-based stress measurement. The ML FSI shows a higher mean (0.623) but comparable variation. CDS spreads average 192 basis points with considerable fluctuation reflecting sovereign risk perceptions over our sample period.
+Table~\ref{tab:summary} presents descriptive statistics for our analysis variables. The Dictionary FSI exhibits a mean of 0.252 with substantial variation (standard deviation of 0.176), indicating meaningful time-series dynamics in search-based stress measurement. The ML FSI shows a higher mean (0.623) but comparable variation. The News FSI has a lower mean (0.135) and range (max 0.544), consistent with the base rate of stress-related articles in financial news being relatively low outside crisis periods; its sample size ($N = 166$) is smaller due to the availability of the news corpus within the aligned monthly sample. CDS spreads average 192 basis points with considerable fluctuation reflecting sovereign risk perceptions over our sample period.
 
 \begin{table}[htbp]
 \centering
@@ -106,6 +106,7 @@ Variable & Mean & Std. Dev. & Min & Max & N \\
 \hline
 Dictionary FSI & 0.252 & 0.176 & 0.000 & 1.000 & 214 \\
 ML FSI & 0.623 & 0.183 & 0.000 & 1.000 & 214 \\
+News FSI & 0.135 & 0.104 & 0.000 & 0.544 & 166 \\
 Combined FSI & 0.438 & 0.117 & 0.142 & 0.779 & 214 \\
 CDS 5Y (bps) & 192.4 & 76.1 & 97.3 & 486.9 & 214 \\
 IBOV Volatility (\%) & 22.8 & 12.2 & 9.2 & 96.2 & 214 \\
@@ -143,7 +144,7 @@ The cumulative effect reaches +81.45\% after 12 months, meaning a one-standard-d
 
 \subsection{Methodology Comparison}
 
-Figure~\ref{fig:comparison} and Table~\ref{tab:irf_results} compare the predictive performance across our three FSI construction methods. The results reveal substantial differences in predictive content depending on the construction methodology.
+Figure~\ref{fig:comparison} and Table~\ref{tab:irf_results} compare the predictive performance across our four FSI construction methods. The results reveal substantial differences in predictive content depending on the construction methodology.
 
 \begin{table}[htbp]
 \centering
@@ -154,6 +155,7 @@ Method & Cumulative IRF (\%) & Significant Months \\
 \hline
 Dictionary FSI & +81.45 & 13/13 \\
 ML FSI & $-$37.23 & 2/13 \\
+News FSI & +34.39 & 2/13 \\
 Combined FSI & +33.44 & 3/13 \\
 \hline
 \end{tabular}
@@ -168,6 +170,8 @@ Combined FSI & +33.44 & 3/13 \\
 
 The Dictionary FSI substantially outperforms alternatives, exhibiting the only consistently positive and significant impulse response pattern. The ML FSI produces a negative cumulative response ($-37.23\%$), with only 2 of 13 horizons achieving statistical significance. This counterintuitive finding suggests that the LASSO-selected queries, while potentially predictive of short-term equity returns in the training sample, fail to capture stress dynamics relevant for sovereign credit risk. The negative correlation between ML FSI and volatility ($r = -0.21$) confirms that ML-selected queries behave inversely to realized financial stress.
 
+The News FSI shows a positive cumulative effect ($+34.39\%$), with 2 of 13 horizons reaching statistical significance. While less powerful than the Dictionary FSI in the IRF framework, the positive direction is consistent with the hypothesis that news-based stress signals predict sovereign credit risk widening. The limited significance likely reflects the lower variance of the News FSI and the reduced sample size ($N = 166$) relative to the search-based indices.
+
 The Combined FSI shows positive but substantially weaker effects (+33.44\%), with only 3 significant horizons out of 13. Combining the strongly predictive Dictionary FSI with the inversely-behaving ML FSI dilutes rather than enhances the signal. This result highlights a limitation of mechanical combination approaches when component indices capture fundamentally different phenomena.
 
 \subsection{Granger Causality Results}
@@ -181,18 +185,32 @@ Table~\ref{tab:granger} presents Granger causality test results, which complemen
 \hline
 Cause & Effect & Min $p$-value & Significant \\
 \hline
+\multicolumn{4}{l}{\textit{Panel A: Dictionary FSI}} \\
 Dictionary FSI & CDS (log-returns) & 0.065 & * \\
 Dictionary FSI & Volatility & $<$0.0001 & *** \\
 Dictionary FSI & News FSI & 0.004 & *** \\
 Volatility & Dictionary FSI & 0.012 & ** \\
 \hline
+\multicolumn{4}{l}{\textit{Panel B: News FSI}} \\
+News FSI & CDS (log-returns) & 0.018 & ** \\
+News FSI & Volatility & 0.002 & *** \\
+Volatility & News FSI & 0.001 & *** \\
+\hline
+\multicolumn{4}{l}{\textit{Panel C: ML and Combined FSI}} \\
+ML FSI & CDS (log-returns) & 0.087 & --- \\
+Combined FSI & CDS (log-returns) & 0.059 & * \\
+\hline
 \multicolumn{4}{l}{\small *$p<0.10$; **$p<0.05$; ***$p<0.01$}
 \end{tabular}
 \end{table}
 
-The Dictionary FSI exhibits marginally significant predictive power for CDS movements ($p = 0.065$), falling just outside conventional significance thresholds but consistent with the strong IRF results. More strikingly, the FSI strongly Granger-causes IBOVESPA volatility ($p < 0.0001$), indicating robust predictive content for equity market stress. This finding suggests that retail investor search behavior contains information about future market conditions beyond what is captured in current prices.
+Panel~A shows that the Dictionary FSI exhibits marginally significant predictive power for CDS movements ($p = 0.065$), falling just outside conventional significance thresholds but consistent with the strong IRF results. More strikingly, the FSI strongly Granger-causes IBOVESPA volatility ($p < 0.0001$), indicating robust predictive content for equity market stress. This finding suggests that retail investor search behavior contains information about future market conditions beyond what is captured in current prices.
 
-The result that Dictionary FSI Granger-causes News FSI ($p = 0.004$) is particularly interesting. This suggests that retail investor search behavior leads professional media coverage of financial stress, consistent with an information diffusion hypothesis where retail investors react to emerging stress signals before journalists compile and publish their analysis.
+Panel~B reveals that the News FSI Granger-causes CDS log-returns at the 5\% level ($p = 0.018$), a result that is more significant than the Dictionary FSI's marginal relationship with CDS. The News FSI also strongly Granger-causes volatility ($p = 0.002$). These results indicate that professional financial journalism contains independent predictive information for sovereign credit risk. The bidirectional causality between volatility and the News FSI ($p = 0.001$) suggests that news coverage both anticipates and responds to market conditions.
+
+Panel~C confirms that the ML FSI and Combined FSI have weaker predictive content for CDS movements. The ML FSI fails to reach significance ($p = 0.087$), while the Combined FSI is only marginally significant ($p = 0.059$), consistent with the dilution effect observed in the IRF analysis.
+
+The result that Dictionary FSI Granger-causes News FSI ($p = 0.004$, Panel~A) is particularly interesting. This suggests that retail investor search behavior leads professional media coverage of financial stress, consistent with an information diffusion hypothesis where retail investors react to emerging stress signals before journalists compile and publish their analysis.
 
 The bidirectional causality between volatility and the Dictionary FSI suggests feedback mechanisms: search-based stress both anticipates and responds to market movements. This pattern is consistent with theories of information diffusion in financial markets, where investor attention responds to price movements while simultaneously containing independent predictive information.
 
