@@ -64,6 +64,37 @@ We construct a combined index using inverse-variance weighting of the dictionary
 
 \noindent where $\sigma_{\text{Dict}}^2$ and $\sigma_{\text{ML}}^2$ are the sample variances of each index.
 
+\subsubsection{News-Based FSI}
+
+Following \cite{baker2016measuring}, we construct a news-based Financial Stress Index using textual analysis of Brazilian financial news articles. This approach captures stress signals from professional financial journalism rather than retail investor search behavior.
+
+\paragraph{Data Collection.} We collect 33,881 financial news articles from three major Brazilian news sources: Folha de S\~ao Paulo (32,159 articles), Valor Econ\^omico (1,021 articles), and G1 (701 articles). The sample spans June 2002 to December 2025, providing over two decades of news coverage. Articles are collected from the economics and markets sections using automated web scraping with subsequent quality filtering.
+
+\paragraph{Three-Way Co-occurrence Method.} We classify articles as stress-related using a two-way co-occurrence approach adapted from \cite{baker2016measuring}. An article is flagged as containing financial stress content if it simultaneously contains:
+
+\begin{enumerate}
+    \item At least one \textit{financial term} from a dictionary of 99 Portuguese financial terms (e.g., ``mercado,'' ``bolsa,'' ``ação,'' ``investimento'')
+    \item At least one \textit{stress or negative term} from combined dictionaries of 162 stress terms (e.g., ``crise,'' ``risco,'' ``volatilidade'') and 289 negative terms (e.g., ``queda,'' ``perda,'' ``pessimista'')
+\end{enumerate}
+
+The dictionaries are carefully constructed to reflect Brazilian Portuguese financial terminology and institutional context.
+
+\paragraph{Stress Score Calculation.} For each article meeting the co-occurrence criteria, we compute a weighted stress score:
+
+\begin{equation}\label{eq:news_score}
+    S_a = \sqrt{F_a \times (2 \cdot T_a^{\text{stress}} + T_a^{\text{neg}})}
+\end{equation}
+
+\noindent where $S_a$ is the stress score for article $a$, $F_a$ is the count of financial terms, $T_a^{\text{stress}}$ is the count of stress terms, and $T_a^{\text{neg}}$ is the count of negative terms. Stress terms receive double weight as they directly indicate financial distress, while negative terms provide contextual sentiment.
+
+\paragraph{Weekly Aggregation.} We aggregate article-level scores to weekly frequency:
+
+\begin{equation}\label{eq:news_fsi}
+    \text{FSI}_t^{\text{News}} = \frac{\sum_{a \in \mathcal{A}_t} S_a}{N_t}
+\end{equation}
+
+\noindent where $\mathcal{A}_t$ is the set of articles published in week $t$ and $N_t$ is the total article count. The resulting index is normalized to a $[0, 1]$ scale using min-max normalization across the full sample period.
+
 \subsection{Econometric Framework}
 
 \subsubsection{Stationarity and Data Transformations}
@@ -278,6 +309,78 @@ Fiscal Framework Concerns & 2024 & Yes & 0.71 \\
 \end{table}
 
 The regime analysis provides additional support for the validity of our search-based FSI. The fact that an unsupervised statistical model---estimated solely from FSI dynamics---recovers known crisis periods suggests that Google search behavior genuinely reflects financial market conditions. Moreover, the asymmetric regime characteristics (higher mean, higher variance in crisis) align with established theories of financial market behavior during stress periods \citep{ang2002asymmetric}.
+
+\subsection{News-Based FSI Results}
+
+The news-based FSI provides an alternative measure of financial stress derived from professional financial journalism rather than retail investor search behavior. Table~\ref{tab:news_summary} presents descriptive statistics for the news-based index.
+
+\begin{table}[htbp]
+\centering
+\caption{News-Based FSI Summary Statistics}\label{tab:news_summary}
+\begin{tabular}{lc}
+\hline
+Statistic & Value \\
+\hline
+Sample Period & Jun 2002 -- Dec 2025 \\
+Total Articles Analyzed & 33,881 \\
+Articles with Stress Co-occurrence & 6,047 (17.8\%) \\
+Weekly Observations & 929 \\
+Mean FSI & 0.125 \\
+Std. Dev. & 0.124 \\
+Min & 0.000 \\
+Max & 1.000 \\
+\hline
+\end{tabular}
+\end{table}
+
+The news-based FSI exhibits substantial time variation, with a mean of 0.125 and standard deviation of 0.124 on the normalized $[0, 1]$ scale. Approximately 17.8\% of all articles meet the co-occurrence criteria for stress classification, indicating that financial stress is a recurring but not dominant theme in Brazilian financial journalism.
+
+\subsubsection{Crisis Episode Detection}
+
+Figure~\ref{fig:news_fsi} displays the news-based FSI over our sample period. The index successfully captures major stress episodes, with elevated values during known crisis periods.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{../output/news_fsi_analysis.png}
+    \caption{News-Based Financial Stress Index (2002--2025). Panel A shows the weekly FSI with high-stress periods (FSI $>$ 0.5) shaded in red and low-stress periods in green. Panel B displays article counts, distinguishing total articles from stress-classified articles. Panel C shows IBOVESPA realized volatility for comparison.}
+    \label{fig:news_fsi}
+\end{figure}
+
+Table~\ref{tab:news_peaks} presents the highest-stress weeks in our sample (restricted to weeks with at least 10 articles for robustness). The peak stress weeks align with significant market events, including periods of political uncertainty, fiscal concerns, and market corrections.
+
+\begin{table}[htbp]
+\centering
+\caption{Highest News-Based FSI Weeks (10+ Articles)}\label{tab:news_peaks}
+\begin{tabular}{lccc}
+\hline
+Week & FSI & Stress Articles & Total Articles \\
+\hline
+Mar 25, 2019 & 0.634 & 7 & 10 \\
+Apr 22, 2024 & 0.615 & 8 & 11 \\
+Jun 19, 2023 & 0.512 & 13 & 18 \\
+Apr 9, 2007 & 0.510 & 7 & 12 \\
+Jun 9, 2014 & 0.473 & 27 & 41 \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsubsection{Comparison with Google Trends FSI}
+
+The news-based and Google Trends-based FSI measures capture complementary aspects of financial stress. The Dictionary FSI reflects retail investor attention and concern, while the News FSI captures the intensity of stress-related coverage in professional financial media.
+
+The Granger causality results in Table~\ref{tab:granger} indicate that the Dictionary FSI Granger-causes the News FSI ($p = 0.004$), suggesting that retail investor search behavior leads professional media coverage. This finding is consistent with the information diffusion hypothesis: retail investors may react to early stress signals before journalists compile and publish their analysis.
+
+\subsubsection{Methodological Implications}
+
+The news-based approach offers several advantages over search-based measures:
+
+\begin{enumerate}
+    \item \textit{Professional filtering}: News articles undergo editorial review, potentially reducing noise from irrelevant searches
+    \item \textit{Longer sample period}: News archives extend further back than Google Trends data (2002 vs. 2008)
+    \item \textit{Content depth}: Full article text provides richer context than search query counts
+\end{enumerate}
+
+However, the news-based FSI also has limitations. Coverage intensity varies by news source, and editorial decisions may introduce selection bias. The two-way co-occurrence method, while more inclusive than three-way co-occurrence, may still miss nuanced stress discussions that do not use explicit dictionary terms.
 
 \subsection{Discussion}
 
