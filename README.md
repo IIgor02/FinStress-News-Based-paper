@@ -313,21 +313,6 @@ Financial stress regime classification using threshold detection with high-stres
 - Jordà, Ò. (2005). Estimation and Inference of Impulse Responses by Local Projections. *American Economic Review*, 95(1), 161-182.
 - Hamilton, J. D. (1989). A New Approach to the Economic Analysis of Nonstationary Time Series. *Econometrica*, 57(2), 357-384.
 - Newey, W. K., & West, K. D. (1987). A Simple, Positive Semi-Definite, Heteroskedasticity and Autocorrelation Consistent Covariance Matrix. *Econometrica*, 55(3), 703-708.
-
----
-
-## Citation
-
-If you use this code or data, please cite:
-
-```bibtex
-@misc{igor2025fsi,
-  author = {Igor, Pedro},
-  title = {A News-Based Financial Stress Index: Evidence from Brazilian Markets},
-  year = {2025},
-  institution = {CAEN/UFC},
-  url = {https://github.com/IIgor02/FinStress-News-Based-paper}
-}
 ```
 
 ---
